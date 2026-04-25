@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,6 +26,61 @@ const (
 	defaultModel     = "mlx-community/gemma-4-26b-a4b-it-4bit"
 	defaultMaxTokens = 32768
 )
+
+type usageStats struct {
+	mu               sync.Mutex
+	TotalCalls       int `json:"total_calls"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func usageFilePath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("get executable path: %w", err)
+	}
+	return filepath.Join(filepath.Dir(exe), "usage.json"), nil
+}
+
+func loadUsage(path string) *usageStats {
+	s := &usageStats{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return s
+	}
+	_ = json.Unmarshal(data, s)
+	return s
+}
+
+func (s *usageStats) add(u llm.Usage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TotalCalls++
+	s.PromptTokens += u.PromptTokens
+	s.CompletionTokens += u.CompletionTokens
+	s.TotalTokens += u.TotalTokens
+}
+
+func (s *usageStats) save(path string) error {
+	s.mu.Lock()
+	data, err := json.MarshalIndent(s, "", "  ")
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("marshal usage: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("write usage tmp: %w", err)
+	}
+	return os.Rename(tmp, path)
+}
+
+func (s *usageStats) snapshot() (calls, prompt, completion, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.TotalCalls, s.PromptTokens, s.CompletionTokens, s.TotalTokens
+}
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -66,6 +124,12 @@ func main() {
 
 	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent)
 
+	usagePath, err := usageFilePath()
+	if err != nil {
+		log.Fatalf("resolve usage file path: %v", err)
+	}
+	stats := loadUsage(usagePath)
+
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "local-llm",
 		Version: version,
@@ -89,10 +153,24 @@ func main() {
 				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
 			}, nil, nil
 		}
+		stats.add(usage)
+		_ = stats.save(usagePath)
 		result := text + fmt.Sprintf("\n\n[usage: prompt=%d, completion=%d, total=%d]",
 			usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: result}},
+		}, nil, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_llm_usage",
+		Description: "로컬 LLM 누적 사용량을 반환합니다 (총 호출 수, 프롬프트/완성/전체 토큰).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ *struct{}) (*mcp.CallToolResult, any, error) {
+		calls, prompt, completion, total := stats.snapshot()
+		text := fmt.Sprintf("total_calls=%d, prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
+			calls, prompt, completion, total)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
 	})
 
