@@ -30,6 +30,12 @@ type chatRequest struct {
 	MaxTokens int           `json:"max_tokens"`
 }
 
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -39,6 +45,7 @@ type chatResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+	Usage Usage `json:"usage"`
 }
 
 type Client struct {
@@ -66,13 +73,13 @@ func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxC
 	}
 }
 
-func (c *Client) Call(ctx context.Context, in *Input) (string, error) {
+func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if c.sem != nil {
 		select {
 		case c.sem <- struct{}{}:
 			defer func() { <-c.sem }()
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", Usage{}, ctx.Err()
 		}
 	}
 	messages := []chatMessage{}
@@ -92,39 +99,39 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, error) {
 
 	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, MaxTokens: maxTokens})
 	if err != nil {
-		return "", fmt.Errorf("marshal failed: %w", err)
+		return "", Usage{}, fmt.Errorf("marshal failed: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("create request failed: %w", err)
+		return "", Usage{}, fmt.Errorf("create request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", Usage{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response failed: %w", err)
+		return "", Usage{}, fmt.Errorf("read response failed: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
+		return "", Usage{}, fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
 	}
 
 	var result chatResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("parse failed: %w", err)
+		return "", Usage{}, fmt.Errorf("parse failed: %w", err)
 	}
 	if result.Error != nil {
-		return "", fmt.Errorf("API error: %s", result.Error.Message)
+		return "", Usage{}, fmt.Errorf("API error: %s", result.Error.Message)
 	}
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
+		return "", Usage{}, fmt.Errorf("empty response")
 	}
-	return result.Choices[0].Message.Content, nil
+	return result.Choices[0].Message.Content, result.Usage, nil
 }
