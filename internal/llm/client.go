@@ -16,7 +16,7 @@ type Input struct {
 	Prompt    string `json:"prompt"               jsonschema:"LLM에 전달할 사용자 메시지,required"`
 	System    string `json:"system,omitempty"     jsonschema:"시스템 프롬프트 (선택사항)"`
 	Model     string `json:"model,omitempty"      jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
-	MaxTokens int    `json:"max_tokens,omitempty" jsonschema:"최대 출력 토큰 수 (기본값: 1000)"`
+	MaxTokens int    `json:"max_tokens,omitempty" jsonschema:"최대 출력 토큰 수 (기본값: 32768)"`
 }
 
 type chatMessage struct {
