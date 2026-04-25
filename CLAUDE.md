@@ -75,6 +75,14 @@ git push origin v{X}.{Y}.{Z}
 gh release create v{X}.{Y}.{Z} --title "v{X}.{Y}.{Z}" --generate-notes --target main
 ```
 
+릴리스 생성 후 **릴리즈 노트를 반드시 검토**한다. `--generate-notes`는 feature PR(develop→main)과 그 안의 PR이 중복 나열되는 경우가 있다. 중복 항목은 하나로 합치고, PR 번호는 콤마로 연결한다:
+
+```
+* feat: some feature by @user in https://.../pull/7, https://.../pull/8
+```
+
+검토 후 수정이 필요하면 `gh release edit v{X}.{Y}.{Z} --notes "..."` 로 수정한다.
+
 ## Adding a new MCP tool
 
 1. 필요하면 `internal/` 아래에 새 패키지 또는 함수 추가
