@@ -49,9 +49,31 @@ git tag가 없으면 `version=dev`.
    - `git branch -d {브랜치명} && git push origin --delete {브랜치명}`
    - `gh issue close {N}`
    - `git fetch --prune`
-6. **develop → main PR 머지 후 로컬 업데이트**
+6. **develop → main PR 머지 후 로컬 업데이트 및 태깅**
    - `git checkout main && git pull origin main`
    - `git checkout develop && git pull origin develop`
+   - 버전 결정 후 태그 생성 및 릴리스 (아래 **Versioning & Tagging** 참조)
+
+## Versioning & Tagging
+
+태그는 **반드시 main 브랜치**에서 생성한다.
+
+### 버전 결정 기준 (Semantic Versioning)
+
+| 변경 유형 | 예시 | 버전 |
+|---|---|---|
+| 하위 호환 버그픽스 | 오타 수정, 잘못된 기본값 수정 | PATCH (`v0.x.Y+1`) |
+| 하위 호환 기능 추가 | 새 필드 반환, 새 파라미터 추가 | MINOR (`v0.X+1.0`) |
+| 하위 비호환 변경 | API 구조 변경, 기존 필드 제거 | MAJOR (`vX+1.0.0`) |
+
+### 태그 생성 & 릴리스
+
+```bash
+git checkout main
+git tag v{X}.{Y}.{Z}
+git push origin v{X}.{Y}.{Z}
+gh release create v{X}.{Y}.{Z} --title "v{X}.{Y}.{Z}" --generate-notes --target main
+```
 
 ## Adding a new MCP tool
 
