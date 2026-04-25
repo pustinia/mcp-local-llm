@@ -28,12 +28,27 @@ git tag가 없으면 `version=dev`.
 - **`internal/` 패키지는 외부 노출 없음** — `llm.Input`, `llm.Client` 등은 이 모듈 안에서만 쓴다.
 - **에러 래핑** — `fmt.Errorf("context: %w", err)` 패턴을 따른다.
 - **MCP 에러 반환** — 도구 레벨 에러는 `log.Fatal`이 아닌 `CallToolResult{IsError: true}`로 반환한다.
+- **변경 시 README.md 필수 업데이트** — 환경변수 추가/변경, 동작 변경, 설정 예시 변경 시 반드시 README.md의 Configuration 표와 Usage 예시를 함께 수정한다.
 
 ## Adding a new MCP tool
 
 1. 필요하면 `internal/` 아래에 새 패키지 또는 함수 추가
 2. `cmd/mcp-local-llm/main.go`에서 `mcp.AddTool()` 호출 추가
 3. 입력 구조체는 `jsonschema` 태그로 Claude에 파라미터 설명 제공
+
+## Benchmarking
+
+결과 파일은 `bench/results-YYYY-MM-DD.md` 하나로 유지한다. 같은 날 여러 번 실행할 경우 파일을 새로 만들지 말고 동일 파일 안에 Run 번호로 구분한다.
+
+```markdown
+## Run 1 — 13:07 (초기 측정)
+...
+
+## Run 2 — 15:32 (max_tokens 조정 후)
+...
+```
+
+리소스 모니터링은 `bench/monitor.sh <PID> <output.csv>` 로 실행한다.
 
 ## Testing & debugging
 
