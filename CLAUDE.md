@@ -1,77 +1,77 @@
 # CLAUDE.md
 
-AI 코딩 어시스턴트를 위한 내부 문서. README.md는 사람 독자용이고 이 파일은 코드 작업 전 컨텍스트 파악용.
+Internal documentation for the AI coding assistant. README.md is for human readers, while this file is for understanding context before coding tasks.
 
-## 로컬 LLM 사용 기준
+## Local LLM Usage Standards
 
-`call_local_llm` (Gemma 4 26B, 4-bit)이 사용 가능하다.
-**기본적으로 로컬 LLM을 먼저 호출해라.** 아래 경우에만 직접 처리한다:
-- 복잡한 추론 또는 멀티스텝 코드 분석
-- 아키텍처 설계 또는 구현 계획 수립
-- 도구 호출 결과를 바탕으로 한 판단이 필요한 경우
+`call_local_llm` (Gemma 4 26B, 4-bit) is available.
+**By default, call the local LLM first.** Only handle directly in the following cases:
+- Complex reasoning or multi-step code analysis
+- Architecture design or implementation planning
+- When judgment is required based on tool call results
 
-로컬 LLM에 적합한 작업 예시: 번역, 요약, 초안 작성, 단순 질문 응답, GitHub issue/PR 본문 작성, 커밋 메시지 작성.
-`call_local_llm` 호출 시 토큰 제한이 필요한 특별한 이유가 없으면 `max_tokens`를 생략해라 (서버 기본값 32768 사용).
+Examples of tasks suitable for the local LLM: translation, summarization, drafting, simple Q&A, writing GitHub issue/PR bodies, writing commit messages.
+When calling `call_local_llm`, omit `max_tokens` unless there is a specific reason for token limits (uses server default 32768).
 
 ## Project layout
 
 ```
-cmd/mcp-local-llm/main.go   # 엔트리포인트: 버전 플래그, 환경변수 파싱, MCP 서버 등록
-internal/llm/client.go      # HTTP 클라이언트: OpenAI-compatible /v1/chat/completions 호출
-Makefile                    # build / clean 타겟
-.env.example                # 환경변수 목록 참조용 (바이너리는 파일 읽지 않음)
+cmd/mcp-local-llm/main.go   # Entry point: version flags, environment variable parsing, MCP server registration
+internal/llm/client.go      # HTTP client: OpenAI-compatible /v1/chat/completions calls
+Makefile                    # build / clean targets
+.env.example                # For reference of environment variable list (the binary does not read the file)
 ```
 
 ## Build & run
 
 ```bash
 make build                          # → bin/mcp-local-llm
-make clean                          # bin/ 삭제
-./bin/mcp-local-llm -version        # 버전 확인
+make clean                          # delete bin/
+./bin/mcp-local-llm -version        # check version
 ```
 
-버전(`main.version`)과 빌드 시각(`main.buildTime`)은 `-ldflags`로 컴파일 타임에 주입된다.
-git tag가 없으면 `version=dev`.
+Version (`main.version`) and build time (`main.buildTime`) are injected at compile time via `-ldflags`.
+If there is no git tag, `version=dev`.
 
 ## Key conventions
 
-- **설정은 환경변수로만** — 플래그는 `-version` 하나뿐. 새 설정을 추가할 때 flags를 늘리지 말고 `envOr()` / `os.Getenv()` 패턴을 사용한다.
-- **`internal/` 패키지는 외부 노출 없음** — `llm.Input`, `llm.Client` 등은 이 모듈 안에서만 쓴다.
-- **에러 래핑** — `fmt.Errorf("context: %w", err)` 패턴을 따른다.
-- **MCP 에러 반환** — 도구 레벨 에러는 `log.Fatal`이 아닌 `CallToolResult{IsError: true}`로 반환한다.
-- **변경 시 README.md 필수 업데이트** — 환경변수 추가/변경, 동작 변경, 설정 예시 변경 시 반드시 README.md의 Configuration 표와 Usage 예시를 함께 수정한다.
+- **Configuration via environment variables only** — the only flag is `-version`. When adding new settings, do not increase the number of flags; use the `envOr()` / `os.Getenv()` pattern.
+- **`internal/` packages are not exposed externally** — `llm.Input`, `llm.Client`, etc., are used only within this module.
+- **Error wrapping** — follow the `fmt.Errorf("context: %w", err)` pattern.
+- **Returning MCP errors** — tool-level errors should be returned as `CallToolResult{IsError: true}` instead of using `log.Fatal`.
+- **Mandatory README.md updates upon changes** — when adding/changing environment variables, changing behavior, or changing configuration examples, you must also update the Configuration table and Usage examples in README.md.
 
-## 개발 워크플로우
+## Development Workflow
 
-코드 변경은 항상 아래 순서를 따른다:
+Code changes always follow the order below:
 
-1. **GitHub issue 생성** — 영어로, 변경 동기와 구체적 구현 방향 포함
-2. **브랜치 생성** — `feat/issue-{N}-{short-desc}` 또는 `fix/issue-{N}-{short-desc}` 형식으로 `develop`에서 분기
-3. **브랜치에서 작업** 후 커밋
-4. **PR 생성** — 이슈 번호 연결 (`Closes #N`)
-5. **PR 머지 후 정리** (feature 브랜치 → develop)
+1. **Create a GitHub issue** — in English, including the motivation for the change and specific implementation direction.
+2. **Create a branch** — branch from `develop` using the format `feat/issue-{N}-{short-desc}` or `fix/issue-{N}-{short-desc}`.
+3. **Work on the branch** and commit.
+4. **Create a PR** — link the issue number (`Closes #N`).
+5. **Cleanup after PR merge** (feature branch → develop)
    - `git checkout develop && git pull origin develop`
-   - `git branch -d {브랜치명} && git push origin --delete {브랜치명}`
+   - `git branch -d {branch_name} && git push origin --delete {branch_name}`
    - `gh issue close {N}`
    - `git fetch --prune`
-6. **develop → main PR 머지 후 로컬 업데이트 및 태깅**
+6. **Local update and tagging after develop → main PR merge**
    - `git checkout main && git pull origin main`
    - `git checkout develop && git pull origin develop`
-   - 버전 결정 후 태그 생성 및 릴리스 (아래 **Versioning & Tagging** 참조)
+   - After deciding the version, create a tag and release (see **Versioning & Tagging** below).
 
 ## Versioning & Tagging
 
-태그는 **반드시 main 브랜치**에서 생성한다.
+Tags must be created on the **main branch**.
 
-### 버전 결정 기준 (Semantic Versioning)
+### Versioning Criteria (Semantic Versioning)
 
-| 변경 유형 | 예시 | 버전 |
+| Change Type | Example | Version |
 |---|---|---|
-| 하위 호환 버그픽스 | 오타 수정, 잘못된 기본값 수정 | PATCH (`v0.x.Y+1`) |
-| 하위 호환 기능 추가 | 새 필드 반환, 새 파라미터 추가 | MINOR (`v0.X+1.0`) |
-| 하위 비호환 변경 | API 구조 변경, 기존 필드 제거 | MAJOR (`vX+1.0.0`) |
+| Backward-compatible bug fix | Typo fix, fixing incorrect default values | PATCH (`v0.x.Y+1`) |
+| Backward-compatible feature addition | Returning new fields, adding new parameters | MINOR (`v0.X+1.0`) |
+| Backward-incompatible change | Changing API structure, removing existing fields | MAJOR (`vX+1.0.0`) |
 
-### 태그 생성 & 릴리스
+### Tagging & Release
 
 ```bash
 git checkout main
@@ -80,43 +80,43 @@ git push origin v{X}.{Y}.{Z}
 gh release create v{X}.{Y}.{Z} --title "v{X}.{Y}.{Z}" --generate-notes --target main
 ```
 
-릴리스 생성 후 **릴리즈 노트를 반드시 검토**한다. `--generate-notes`는 feature PR(develop→main)과 그 안의 PR이 중복 나열되는 경우가 있다. 중복 항목은 하나로 합치고, PR 번호는 콤마로 연결한다:
+After creating a release, **always review the release notes**. `--generate-notes` may sometimes list the feature PR (develop→main) and its constituent PRs redundantly. Consolidate duplicate items and connect PR numbers with commas:
 
 ```
 * feat: some feature by @user in https://.../pull/7, https://.../pull/8
 ```
 
-검토 후 수정이 필요하면 `gh release edit v{X}.{Y}.{Z} --notes "..."` 로 수정한다.
+If changes are needed after review, use `gh release edit v{X}.{Y}.{Z} --notes "..."` to edit.
 
 ## Adding a new MCP tool
 
-1. 필요하면 `internal/` 아래에 새 패키지 또는 함수 추가
-2. `cmd/mcp-local-llm/main.go`에서 `mcp.AddTool()` 호출 추가
-3. 입력 구조체는 `jsonschema` 태그로 Claude에 파라미터 설명 제공
+1. Add a new package or function under `internal/` if necessary.
+2. Add the `mcp.AddTool()` call in `cmd/mcp-local-llm/main.go`.
+3. Provide parameter descriptions to Claude using `jsonschema` tags in the input structures.
 
 ## Benchmarking
 
-결과 파일은 `bench/results-YYYY-MM-DD.md` 하나로 유지한다. 같은 날 여러 번 실행할 경우 파일을 새로 만들지 말고 동일 파일 안에 Run 번호로 구분한다.
+Maintain a single result file at `bench/results-YYYY-MM-DD.md`. If running multiple times on the same day, do not create new files; instead, distinguish them by Run number within the same file.
 
 ```markdown
-## Run 1 — 13:07 (초기 측정)
+## Run 1 — 13:07 (Initial measurement)
 ...
 
-## Run 2 — 15:32 (max_tokens 조정 후)
+## Run 2 — 15:32 (After adjusting max_tokens)
 ...
 ```
 
-리소스 모니터링은 `bench/monitor.sh <PID> <output.csv>` 로 실행한다.
+Run resource monitoring using `bench/monitor.sh <PID> <output.csv>`.
 
 ## Testing & debugging
 
-로컬 LLM 서버 없이 MCP 프로토콜만 검증:
+Verifying only the MCP protocol without a local LLM server:
 
 ```bash
 npx @modelcontextprotocol/inspector ./bin/mcp-local-llm
 ```
 
-stdin으로 JSON-RPC 직접 전달도 가능:
+It is also possible to pass JSON-RPC directly via stdin:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | ./bin/mcp-local-llm
