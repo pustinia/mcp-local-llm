@@ -36,6 +36,15 @@ git tag가 없으면 `version=dev`.
 - **MCP 에러 반환** — 도구 레벨 에러는 `log.Fatal`이 아닌 `CallToolResult{IsError: true}`로 반환한다.
 - **변경 시 README.md 필수 업데이트** — 환경변수 추가/변경, 동작 변경, 설정 예시 변경 시 반드시 README.md의 Configuration 표와 Usage 예시를 함께 수정한다.
 
+## 개발 워크플로우
+
+코드 변경은 항상 아래 순서를 따른다:
+
+1. **GitHub issue 생성** — 영어로, 변경 동기와 구체적 구현 방향 포함
+2. **브랜치 생성** — `feat/issue-{N}-{short-desc}` 또는 `fix/issue-{N}-{short-desc}` 형식으로 `develop`에서 분기
+3. **브랜치에서 작업** 후 커밋
+4. **PR 생성** — 이슈 번호 연결 (`Closes #N`)
+
 ## Adding a new MCP tool
 
 1. 필요하면 `internal/` 아래에 새 패키지 또는 함수 추가

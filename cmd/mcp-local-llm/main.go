@@ -82,15 +82,17 @@ func main() {
 			}, nil, nil
 		}
 
-		text, err := client.Call(ctx, in)
+		text, usage, err := client.Call(ctx, in)
 		if err != nil {
 			return &mcp.CallToolResult{
 				IsError: true,
 				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
 			}, nil, nil
 		}
+		result := text + fmt.Sprintf("\n\n[usage: prompt=%d, completion=%d, total=%d]",
+			usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content: []mcp.Content{&mcp.TextContent{Text: result}},
 		}, nil, nil
 	})
 
