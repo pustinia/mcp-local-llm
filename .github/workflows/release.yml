@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+          mkdir -p bin
+
+          for GOOS in darwin linux windows; do
+            for GOARCH in amd64 arm64; do
+              EXT=""
+              if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+              OUTPUT="bin/mcp-local-llm-${GOOS}-${GOARCH}${EXT}"
+              GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "$OUTPUT" ./cmd/mcp-local-llm/
+              echo "Built: $OUTPUT"
+            done
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*
+          generate_release_notes: true
