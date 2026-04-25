@@ -1,4 +1,4 @@
 bin/
-mcp-local-llm
+/mcp-local-llm
 .env
 .mcp.json
