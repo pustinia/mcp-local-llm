@@ -4,7 +4,7 @@ An MCP server that exposes a locally running LLM as a tool to Claude and other M
 
 ## How it works
 
-`mcp-local-llm` acts as a bridge between any OpenAI-compatible local LLM server (e.g. [MLX-LM](https://github.com/ml-explore/mlx-lm)) and MCP clients such as Claude Desktop. It registers a single `call_local_llm` tool and communicates over stdio transport, so no network port is required on the MCP side.
+`mcp-local-llm` acts as a bridge between any OpenAI-compatible local LLM server (e.g. [MLX-LM](https://github.com/ml-explore/mlx-lm)) and MCP clients such as Claude Desktop. It registers `call_local_llm` and `get_llm_usage` tools and communicates over stdio transport, so no network port is required on the MCP side.
 
 ```
 Claude Desktop  ──stdio──►  mcp-local-llm  ──HTTP──►  Local LLM server (port 8000)
@@ -58,13 +58,13 @@ Add the following to your `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop after editing the config. The `call_local_llm` tool will appear in the tool list.
+Restart Claude Desktop after editing the config. The `call_local_llm` and `get_llm_usage` tools will appear in the tool list.
 
 ## Tool reference
 
 ### `call_local_llm`
 
-Calls the local LLM and returns its response as plain text.
+Calls the local LLM and returns its response as plain text. Each response includes a usage summary line: `[usage: prompt=N, completion=M, total=L]`.
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -72,6 +72,16 @@ Calls the local LLM and returns its response as plain text.
 | `system` | no | System prompt (prepended before the user message) |
 | `model` | no | Override the default model for this call |
 | `max_tokens` | no | Override the default token limit for this call |
+
+### `get_llm_usage`
+
+Returns cumulative token usage stats across all `call_local_llm` invocations. Stats persist across server restarts via `usage.json` stored in the same directory as the binary.
+
+```
+total_calls=5, prompt_tokens=1234, completion_tokens=567, total_tokens=1801
+```
+
+No parameters.
 
 ## License
 
