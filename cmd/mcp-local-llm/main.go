@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-local-llm/internal/llm"
@@ -20,7 +21,7 @@ var (
 const (
 	defaultBaseURL   = "http://localhost:8000"
 	defaultModel     = "mlx-community/gemma-4-26b-a4b-it-4bit"
-	defaultMaxTokens = 1000
+	defaultMaxTokens = 32768
 )
 
 func envOr(key, fallback string) string {
@@ -49,11 +50,21 @@ func main() {
 		}
 	}
 
-	client := &llm.Client{
-		BaseURL:          baseURL,
-		DefaultModel:     model,
-		DefaultMaxTokens: maxTokens,
+	var timeout time.Duration
+	if v := os.Getenv("LOCAL_LLM_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = time.Duration(n) * time.Second
+		}
 	}
+
+	maxConcurrent := 0
+	if v := os.Getenv("LOCAL_LLM_MAX_CONCURRENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxConcurrent = n
+		}
+	}
+
+	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent)
 
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "local-llm",
@@ -71,7 +82,7 @@ func main() {
 			}, nil, nil
 		}
 
-		text, err := client.Call(in)
+		text, err := client.Call(ctx, in)
 		if err != nil {
 			return &mcp.CallToolResult{
 				IsError: true,

@@ -32,7 +32,9 @@ All settings are controlled via environment variables. The binary has no config 
 |---|---|---|
 | `LOCAL_LLM_BASE_URL` | `http://localhost:8000` | Base URL of the local LLM server |
 | `LOCAL_LLM_MODEL` | `mlx-community/gemma-4-26b-a4b-it-4bit` | Model name passed to the server |
-| `LOCAL_LLM_MAX_TOKENS` | `1000` | Default maximum output tokens |
+| `LOCAL_LLM_MAX_TOKENS` | `32768` | Default maximum output tokens |
+| `LOCAL_LLM_TIMEOUT_SECONDS` | `300` | HTTP request timeout in seconds |
+| `LOCAL_LLM_MAX_CONCURRENT` | `0` (unlimited) | Max concurrent requests to the LLM server (recommended: `2`) |
 
 Copy `.env.example` to `.env` for reference (the binary itself reads from the process environment, not a file).
 
@@ -47,7 +49,9 @@ Add the following to your `claude_desktop_config.json`:
       "command": "/absolute/path/to/bin/mcp-local-llm",
       "env": {
         "LOCAL_LLM_BASE_URL": "http://localhost:8000",
-        "LOCAL_LLM_MODEL": "mlx-community/gemma-4-26b-a4b-it-4bit"
+        "LOCAL_LLM_MODEL": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "LOCAL_LLM_MAX_TOKENS": "32768",
+        "LOCAL_LLM_MAX_CONCURRENT": "2"
       }
     }
   }

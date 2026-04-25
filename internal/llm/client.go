@@ -2,11 +2,15 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
+
+const defaultTimeout = 5 * time.Minute
 
 type Input struct {
 	Prompt    string `json:"prompt"               jsonschema:"LLM에 전달할 사용자 메시지,required"`
@@ -41,9 +45,36 @@ type Client struct {
 	BaseURL          string
 	DefaultModel     string
 	DefaultMaxTokens int
+	httpClient       *http.Client
+	sem              chan struct{} // nil = 무제한
 }
 
-func (c *Client) Call(in *Input) (string, error) {
+func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int) *Client {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	var sem chan struct{}
+	if maxConcurrent > 0 {
+		sem = make(chan struct{}, maxConcurrent)
+	}
+	return &Client{
+		BaseURL:          baseURL,
+		DefaultModel:     model,
+		DefaultMaxTokens: maxTokens,
+		httpClient:       &http.Client{Timeout: timeout},
+		sem:              sem,
+	}
+}
+
+func (c *Client) Call(ctx context.Context, in *Input) (string, error) {
+	if c.sem != nil {
+		select {
+		case c.sem <- struct{}{}:
+			defer func() { <-c.sem }()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	messages := []chatMessage{}
 	if in.System != "" {
 		messages = append(messages, chatMessage{Role: "system", Content: in.System})
@@ -59,14 +90,32 @@ func (c *Client) Call(in *Input) (string, error) {
 		maxTokens = c.DefaultMaxTokens
 	}
 
-	body, _ := json.Marshal(chatRequest{Model: model, Messages: messages, MaxTokens: maxTokens})
-	resp, err := http.Post(c.BaseURL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, MaxTokens: maxTokens})
+	if err != nil {
+		return "", fmt.Errorf("marshal failed: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create request failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
+	}
+
 	var result chatResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", fmt.Errorf("parse failed: %w", err)
