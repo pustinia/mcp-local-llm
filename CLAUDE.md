@@ -4,14 +4,26 @@ Internal documentation for the AI coding assistant. README.md is for human reade
 
 ## Local LLM Usage Standards
 
-`call_local_llm` (Gemma 4 26B, 4-bit) is available.
-**By default, call the local LLM first.** Only handle directly in the following cases:
-- Complex reasoning or multi-step code analysis
-- Architecture design or implementation planning
-- When judgment is required based on tool call results
+`call_local_llm` (Gemma 4 26B, 4-bit) is available — use it aggressively to save Anthropic token costs.
 
-Examples of tasks suitable for the local LLM: translation, summarization, drafting, simple Q&A, writing GitHub issue/PR bodies, writing commit messages.
-When calling `call_local_llm`, omit `max_tokens` unless there is a specific reason for token limits (uses server default 32768).
+### NEVER generate these yourself — always delegate to `call_local_llm`:
+- GitHub issue bodies and PR descriptions
+- Multi-line commit message bodies (subject line is OK to write directly)
+- Translations of any text
+- Summarization of files, logs, diffs, or text content
+- Drafts of documentation paragraphs, README sections, doc comments
+- Standalone Q&A that doesn't require codebase context
+
+### Handle directly only when:
+- Reasoning over tool results just received in this conversation
+- Architecture design or implementation planning
+- Multi-step code analysis with continuous reasoning
+- Refusal / judgment calls based on user intent
+
+### Calling conventions
+- Omit `max_tokens` unless a specific limit is needed (server default 32768)
+- For drafts (PR/commit/issue), pass concrete context in `prompt` — changes summary and key file paths, not entire diffs
+- After receiving the result, lightly edit only if wrong; do NOT regenerate the whole text yourself
 
 ## Project layout
 

@@ -73,6 +73,18 @@ Calls the local LLM and returns its response as plain text. Each response includ
 | `model` | no | Override the default model for this call |
 | `max_tokens` | no | Override the default token limit for this call |
 
+**Recommended use cases**
+
+`call_local_llm` is designed to be used aggressively as the default for tasks that don't require live codebase context:
+
+- Writing GitHub issue bodies and PR descriptions
+- Drafting documentation paragraphs and README sections
+- Translating text
+- Summarizing files, logs, or diffs
+- Standalone Q&A
+
+Handle directly in Claude only when the task requires reasoning over fresh tool results, architecture decisions, or multi-step code analysis.
+
 ### `get_llm_usage`
 
 Returns cumulative token usage stats across all `call_local_llm` invocations. Stats persist across server restarts via `usage.json` stored in the same directory as the binary.
@@ -82,6 +94,64 @@ total_calls=5, prompt_tokens=1234, completion_tokens=567, total_tokens=1801
 ```
 
 No parameters.
+
+## Usage tracking hook
+
+`scripts/mcp-local-llm-usage.sh` is a [Claude Code Stop hook](https://docs.anthropic.com/en/docs/claude-code/hooks) that prints per-session local LLM usage deltas each time Claude finishes responding:
+
+```
+[local-llm] this turn: +3 calls, +5906 tokens (cumulative: 12 calls, 18234 tokens)
+```
+
+**Setup:**
+
+1. Copy the hook script and make it executable:
+   ```bash
+   cp scripts/mcp-local-llm-usage.sh ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/mcp-local-llm-usage.sh
+   ```
+
+2. Register it as a Stop hook in `.claude/settings.local.json`:
+   ```json
+   {
+     "hooks": {
+       "Stop": [
+         {
+           "matcher": "",
+           "hooks": [
+             { "type": "command", "command": "~/.claude/hooks/mcp-local-llm-usage.sh" }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+3. If your binary is not in `~/.local/bin`, set `MCP_LOCAL_LLM_BINARY_DIR` to the directory containing the binary (and `usage.json`) in the hook environment or at the top of the script.
+
+The script reads `usage.json` from the binary directory and compares it against a snapshot in `~/.claude/state/` to report only the delta for the current session.
+
+## Benchmarking
+
+Scripts in `bench/` help measure your local LLM setup's capacity and inform the `LOCAL_LLM_MAX_CONCURRENT` setting.
+
+### Resource monitoring
+
+```bash
+bench/monitor.sh <PID> <output.csv>
+```
+
+Samples CPU, memory (RSS), and process metrics at 1-second intervals. Run in a separate terminal alongside a benchmark.
+
+### Concurrency & throughput test
+
+```bash
+python3 bench/parallel_bench.py [concurrency] [max_tokens]
+```
+
+Sends requests at the given concurrency level and reports latency, TPS, and success rate. If `concurrency` is omitted, runs a full sweep at 1 → 2 → 4 → 8 automatically. GPU utilization is sampled via `ioreg` (macOS only).
+
+Benchmark results on Gemma 4 26B (4-bit, Apple Silicon) show GPU saturation at ~2 concurrent requests with ~66 TPS peak throughput — the basis for the recommended `LOCAL_LLM_MAX_CONCURRENT=2`.
 
 ## License
 
