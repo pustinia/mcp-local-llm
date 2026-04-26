@@ -20,7 +20,7 @@ type Input struct {
 	Prompt         string `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
 	System         string `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
 	Model          string `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
-	MaxTokens      int    `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (기본값: 32768)"`
+	MaxTokens      int    `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
 	FilterThinking *bool  `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
 }
 
@@ -32,7 +32,7 @@ type chatMessage struct {
 type chatRequest struct {
 	Model     string        `json:"model"`
 	Messages  []chatMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens"`
+	MaxTokens *int          `json:"max_tokens,omitempty"`
 }
 
 type Usage struct {
@@ -99,9 +99,13 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if model == "" {
 		model = c.DefaultModel
 	}
-	maxTokens := in.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = c.DefaultMaxTokens
+	var maxTokens *int
+	if in.MaxTokens > 0 {
+		v := in.MaxTokens
+		maxTokens = &v
+	} else if c.DefaultMaxTokens > 0 {
+		v := c.DefaultMaxTokens
+		maxTokens = &v
 	}
 
 	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, MaxTokens: maxTokens})
