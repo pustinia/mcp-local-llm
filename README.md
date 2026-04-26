@@ -35,6 +35,7 @@ All settings are controlled via environment variables. The binary has no config 
 | `LOCAL_LLM_MAX_TOKENS` | `32768` | Default maximum output tokens |
 | `LOCAL_LLM_TIMEOUT_SECONDS` | `300` | HTTP request timeout in seconds |
 | `LOCAL_LLM_MAX_CONCURRENT` | `0` (unlimited) | Max concurrent requests to the LLM server (recommended: `2`) |
+| `LOCAL_LLM_FILTER_THINKING` | `true` | Strip `<\|channel>thought...<channel\|>` thinking blocks from responses. Can be overridden per-call via the `filter_thinking` parameter. |
 
 Copy `.env.example` to `.env` for reference (the binary itself reads from the process environment, not a file).
 
@@ -72,6 +73,7 @@ Calls the local LLM and returns its response as plain text. Each response includ
 | `system` | no | System prompt (prepended before the user message) |
 | `model` | no | Override the default model for this call |
 | `max_tokens` | no | Override the default token limit for this call |
+| `filter_thinking` | no | Override server-level thinking block filtering for this call (`true` = filter, `false` = keep). Omit to use the server default (`LOCAL_LLM_FILTER_THINKING`). |
 
 **Recommended use cases**
 
