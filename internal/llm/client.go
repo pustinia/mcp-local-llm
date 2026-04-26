@@ -7,16 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
+
+var thinkingRe = regexp.MustCompile(`(?s)<\|channel>thought.*?<channel\|>`)
 
 const defaultTimeout = 5 * time.Minute
 
 type Input struct {
-	Prompt    string `json:"prompt"               jsonschema:"LLM에 전달할 사용자 메시지,required"`
-	System    string `json:"system,omitempty"     jsonschema:"시스템 프롬프트 (선택사항)"`
-	Model     string `json:"model,omitempty"      jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
-	MaxTokens int    `json:"max_tokens,omitempty" jsonschema:"최대 출력 토큰 수 (기본값: 32768)"`
+	Prompt         string `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
+	System         string `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
+	Model          string `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
+	MaxTokens      int    `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (기본값: 32768)"`
+	FilterThinking *bool  `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
 }
 
 type chatMessage struct {
@@ -52,11 +57,12 @@ type Client struct {
 	BaseURL          string
 	DefaultModel     string
 	DefaultMaxTokens int
+	FilterThinking   bool
 	httpClient       *http.Client
 	sem              chan struct{} // nil = 무제한
 }
 
-func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int) *Client {
+func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int, filterThinking bool) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
@@ -68,6 +74,7 @@ func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxC
 		BaseURL:          baseURL,
 		DefaultModel:     model,
 		DefaultMaxTokens: maxTokens,
+		FilterThinking:   filterThinking,
 		httpClient:       &http.Client{Timeout: timeout},
 		sem:              sem,
 	}
@@ -133,5 +140,13 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if len(result.Choices) == 0 {
 		return "", Usage{}, fmt.Errorf("empty response")
 	}
-	return result.Choices[0].Message.Content, result.Usage, nil
+	content := result.Choices[0].Message.Content
+	filterThinking := c.FilterThinking
+	if in.FilterThinking != nil {
+		filterThinking = *in.FilterThinking
+	}
+	if filterThinking {
+		content = strings.TrimSpace(thinkingRe.ReplaceAllString(content, ""))
+	}
+	return content, result.Usage, nil
 }

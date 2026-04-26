@@ -122,7 +122,8 @@ func main() {
 		}
 	}
 
-	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent)
+	filterThinking := envOr("LOCAL_LLM_FILTER_THINKING", "true") != "false"
+	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking)
 
 	usagePath, err := usageFilePath()
 	if err != nil {
