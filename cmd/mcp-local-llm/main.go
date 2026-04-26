@@ -22,9 +22,8 @@ var (
 )
 
 const (
-	defaultBaseURL   = "http://localhost:8000"
-	defaultModel     = "mlx-community/gemma-4-26b-a4b-it-4bit"
-	defaultMaxTokens = 32768
+	defaultBaseURL = "http://localhost:8000"
+	defaultModel   = "mlx-community/gemma-4-26b-a4b-it-4bit"
 )
 
 type usageStats struct {
@@ -101,7 +100,7 @@ func main() {
 	baseURL := envOr("LOCAL_LLM_BASE_URL", defaultBaseURL)
 	model := envOr("LOCAL_LLM_MODEL", defaultModel)
 
-	maxTokens := defaultMaxTokens
+	maxTokens := 0
 	if v := os.Getenv("LOCAL_LLM_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxTokens = n
@@ -122,7 +121,8 @@ func main() {
 		}
 	}
 
-	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent)
+	filterThinking := envOr("LOCAL_LLM_FILTER_THINKING", "true") != "false"
+	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking)
 
 	usagePath, err := usageFilePath()
 	if err != nil {

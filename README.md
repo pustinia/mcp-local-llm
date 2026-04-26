@@ -32,9 +32,10 @@ All settings are controlled via environment variables. The binary has no config 
 |---|---|---|
 | `LOCAL_LLM_BASE_URL` | `http://localhost:8000` | Base URL of the local LLM server |
 | `LOCAL_LLM_MODEL` | `mlx-community/gemma-4-26b-a4b-it-4bit` | Model name passed to the server |
-| `LOCAL_LLM_MAX_TOKENS` | `32768` | Default maximum output tokens |
+| `LOCAL_LLM_MAX_TOKENS` | — | Cap on output tokens per request. If unset, `max_tokens` is omitted and the server decides. |
 | `LOCAL_LLM_TIMEOUT_SECONDS` | `300` | HTTP request timeout in seconds |
 | `LOCAL_LLM_MAX_CONCURRENT` | `0` (unlimited) | Max concurrent requests to the LLM server (recommended: `2`) |
+| `LOCAL_LLM_FILTER_THINKING` | `true` | Strip `<\|channel>thought...<channel\|>` thinking blocks from responses. Can be overridden per-call via the `filter_thinking` parameter. |
 
 Copy `.env.example` to `.env` for reference (the binary itself reads from the process environment, not a file).
 
@@ -50,7 +51,6 @@ Add the following to your `claude_desktop_config.json`:
       "env": {
         "LOCAL_LLM_BASE_URL": "http://localhost:8000",
         "LOCAL_LLM_MODEL": "mlx-community/gemma-4-26b-a4b-it-4bit",
-        "LOCAL_LLM_MAX_TOKENS": "32768",
         "LOCAL_LLM_MAX_CONCURRENT": "2"
       }
     }
@@ -72,6 +72,7 @@ Calls the local LLM and returns its response as plain text. Each response includ
 | `system` | no | System prompt (prepended before the user message) |
 | `model` | no | Override the default model for this call |
 | `max_tokens` | no | Override the default token limit for this call |
+| `filter_thinking` | no | Override server-level thinking block filtering for this call (`true` = filter, `false` = keep). Omit to use the server default (`LOCAL_LLM_FILTER_THINKING`). |
 
 **Recommended use cases**
 
