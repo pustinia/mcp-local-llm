@@ -3,10 +3,12 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -16,17 +18,28 @@ var thinkingRe = regexp.MustCompile(`(?s)<\|channel>thought.*?<channel\|>`)
 
 const defaultTimeout = 5 * time.Minute
 
+type contentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *imageURL `json:"image_url,omitempty"`
+}
+
+type imageURL struct {
+	URL string `json:"url"`
+}
+
 type Input struct {
-	Prompt         string `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
-	System         string `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
-	Model          string `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
-	MaxTokens      int    `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
-	FilterThinking *bool  `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
+	Prompt         string   `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
+	System         string   `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
+	Model          string   `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
+	MaxTokens      int      `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
+	FilterThinking *bool    `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
+	Images         []string `json:"images,omitempty"          jsonschema:"이미지 목록 (파일 경로·URL·base64 data URI 혼합 가능)"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
 }
 
 type chatRequest struct {
@@ -58,11 +71,12 @@ type Client struct {
 	DefaultModel     string
 	DefaultMaxTokens int
 	FilterThinking   bool
+	MaxImages        int
 	httpClient       *http.Client
 	sem              chan struct{} // nil = 무제한
 }
 
-func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int, filterThinking bool) *Client {
+func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int, filterThinking bool, maxImages int) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
@@ -75,9 +89,41 @@ func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxC
 		DefaultModel:     model,
 		DefaultMaxTokens: maxTokens,
 		FilterThinking:   filterThinking,
+		MaxImages:        maxImages,
 		httpClient:       &http.Client{Timeout: timeout},
 		sem:              sem,
 	}
+}
+
+func buildImageContent(prompt string, images []string, maxImages int) ([]contentPart, error) {
+	if maxImages == 0 {
+		return nil, fmt.Errorf("image input is disabled (LOCAL_LLM_MAX_IMAGES=0)")
+	}
+	if maxImages > 0 && len(images) > maxImages {
+		return nil, fmt.Errorf("image count %d exceeds limit %d", len(images), maxImages)
+	}
+	parts := []contentPart{{Type: "text", Text: prompt}}
+	for _, img := range images {
+		var dataURL string
+		switch {
+		case strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://"):
+			dataURL = img
+		case strings.HasPrefix(img, "data:image/"):
+			dataURL = img
+		default:
+			data, err := os.ReadFile(img)
+			if err != nil {
+				return nil, fmt.Errorf("read image %q: %w", img, err)
+			}
+			mime := http.DetectContentType(data)
+			dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+		}
+		parts = append(parts, contentPart{
+			Type:     "image_url",
+			ImageURL: &imageURL{URL: dataURL},
+		})
+	}
+	return parts, nil
 }
 
 func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
@@ -93,7 +139,15 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if in.System != "" {
 		messages = append(messages, chatMessage{Role: "system", Content: in.System})
 	}
-	messages = append(messages, chatMessage{Role: "user", Content: in.Prompt})
+	if len(in.Images) > 0 {
+		parts, err := buildImageContent(in.Prompt, in.Images, c.MaxImages)
+		if err != nil {
+			return "", Usage{}, err
+		}
+		messages = append(messages, chatMessage{Role: "user", Content: parts})
+	} else {
+		messages = append(messages, chatMessage{Role: "user", Content: in.Prompt})
+	}
 
 	model := in.Model
 	if model == "" {

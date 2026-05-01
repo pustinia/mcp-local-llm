@@ -122,7 +122,15 @@ func main() {
 	}
 
 	filterThinking := envOr("LOCAL_LLM_FILTER_THINKING", "true") != "false"
-	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking)
+
+	maxImages := 5
+	if v := os.Getenv("LOCAL_LLM_MAX_IMAGES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxImages = n
+		}
+	}
+
+	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking, maxImages)
 
 	usagePath, err := usageFilePath()
 	if err != nil {
