@@ -111,11 +111,27 @@ func buildImageContent(prompt string, images []string, maxImages int) ([]content
 		case strings.HasPrefix(img, "data:image/"):
 			dataURL = img
 		default:
-			data, err := os.ReadFile(img)
+			f, err := os.Open(img)
+			if err != nil {
+				return nil, fmt.Errorf("read image %q: %w", img, err)
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				return nil, fmt.Errorf("stat image %q: %w", img, err)
+			}
+			const maxImageBytes = 20 << 20 // 20 MB
+			if info.Size() > maxImageBytes {
+				return nil, fmt.Errorf("image %q size %d exceeds %d bytes", img, info.Size(), maxImageBytes)
+			}
+			data, err := io.ReadAll(f)
 			if err != nil {
 				return nil, fmt.Errorf("read image %q: %w", img, err)
 			}
 			mime := http.DetectContentType(data)
+			if mime == "application/octet-stream" {
+				return nil, fmt.Errorf("image %q: unrecognized format", img)
+			}
 			dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 		}
 		parts = append(parts, contentPart{
