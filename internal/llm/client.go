@@ -95,6 +95,31 @@ func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxC
 	}
 }
 
+func readImageAsDataURI(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read image %q: %w", path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat image %q: %w", path, err)
+	}
+	const maxImageBytes = 20 << 20 // 20 MB
+	if info.Size() > maxImageBytes {
+		return "", fmt.Errorf("image %q size %d exceeds %d bytes", path, info.Size(), maxImageBytes)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("read image %q: %w", path, err)
+	}
+	mime := http.DetectContentType(data)
+	if mime == "application/octet-stream" {
+		return "", fmt.Errorf("image %q: unrecognized format", path)
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
 func buildImageContent(prompt string, images []string, maxImages int) ([]contentPart, error) {
 	if maxImages == 0 {
 		return nil, fmt.Errorf("image input is disabled (LOCAL_LLM_MAX_IMAGES=0)")
@@ -111,28 +136,11 @@ func buildImageContent(prompt string, images []string, maxImages int) ([]content
 		case strings.HasPrefix(img, "data:image/"):
 			dataURL = img
 		default:
-			f, err := os.Open(img)
+			var err error
+			dataURL, err = readImageAsDataURI(img)
 			if err != nil {
-				return nil, fmt.Errorf("read image %q: %w", img, err)
+				return nil, err
 			}
-			defer f.Close()
-			info, err := f.Stat()
-			if err != nil {
-				return nil, fmt.Errorf("stat image %q: %w", img, err)
-			}
-			const maxImageBytes = 20 << 20 // 20 MB
-			if info.Size() > maxImageBytes {
-				return nil, fmt.Errorf("image %q size %d exceeds %d bytes", img, info.Size(), maxImageBytes)
-			}
-			data, err := io.ReadAll(f)
-			if err != nil {
-				return nil, fmt.Errorf("read image %q: %w", img, err)
-			}
-			mime := http.DetectContentType(data)
-			if mime == "application/octet-stream" {
-				return nil, fmt.Errorf("image %q: unrecognized format", img)
-			}
-			dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 		}
 		parts = append(parts, contentPart{
 			Type:     "image_url",

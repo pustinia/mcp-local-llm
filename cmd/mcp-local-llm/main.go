@@ -125,7 +125,7 @@ func main() {
 
 	maxImages := 5
 	if v := os.Getenv("LOCAL_LLM_MAX_IMAGES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		if n, err := strconv.Atoi(v); err == nil {
 			maxImages = n
 		}
 	}
