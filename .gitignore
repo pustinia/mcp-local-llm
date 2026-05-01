@@ -2,3 +2,4 @@ bin/
 /mcp-local-llm
 .env
 .mcp.json
+.claude/settings.local.json
