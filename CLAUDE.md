@@ -91,14 +91,21 @@ Tags must be created on the **main branch**.
 git checkout main
 git tag v{X}.{Y}.{Z}
 git push origin v{X}.{Y}.{Z}
-gh release create v{X}.{Y}.{Z} --title "v{X}.{Y}.{Z}" --generate-notes --target main
+gh release create v{X}.{Y}.{Z} --title "v{X}.{Y}.{Z}" --target main --notes "$(cat <<'EOF'
+## What's Changed
+
+### New Features
+* ...
+
+### Bug Fixes & Improvements
+* ...
+
+**Full Changelog**: https://github.com/pustinia/mcp-local-llm/compare/v{PREV}...v{X}.{Y}.{Z}
+EOF
+)"
 ```
 
-After creating a release, **always review the release notes**. `--generate-notes` may sometimes list the feature PR (develop→main) and its constituent PRs redundantly. Consolidate duplicate items and connect PR numbers with commas:
-
-```
-* feat: some feature by @user in https://.../pull/7, https://.../pull/8
-```
+Write release notes from `git log v{PREV}..v{X}.{Y}.{Z} --oneline`, not from `--generate-notes`. Group commits by type and describe changes in user-facing language. Omit merge commits and internal `chore`/`docs` commits unless user-facing. Use `call_local_llm` to draft the notes.
 
 If changes are needed after review, use `gh release edit v{X}.{Y}.{Z} --notes "..."` to edit.
 
