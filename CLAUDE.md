@@ -27,6 +27,13 @@ Break-even point: ~280 chars (~70 tokens) of expected output. Below this, tool c
 - For drafts (PR/commit/issue), pass concrete context in `prompt` — changes summary and key file paths, not entire diffs
 - After receiving the result, lightly edit only if wrong; do NOT regenerate the whole text yourself
 
+### Current description version
+Version A (keyword-trigger) — deployed since 2026-05-02.
+Switch to Version B (principle-based) if Claude still generates directly for transformation tasks after 3+ sessions.
+
+Version B text:
+> Prefer this over generating text yourself whenever output is a transformation of given input (summaries, translations, drafts, release notes, documentation, log analysis, long-form Q&A). Use by default; fall back to Claude only for multi-step reasoning, architectural judgment, or tasks requiring deep codebase context. Supports images (file path, https:// URL, data:image/ URI).
+
 ## Project layout
 
 ```
