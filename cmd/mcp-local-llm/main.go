@@ -145,7 +145,10 @@ func main() {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "call_local_llm",
-		Description: fmt.Sprintf("로컬에서 실행 중인 LLM(%s)을 호출합니다. 간단한 요약, 번역, 코드 생성, 빠른 질문 응답 등에 활용하세요.", model),
+		Description: "ALWAYS use this instead of generating text yourself for: summaries, " +
+			"translations, PR/commit/issue drafts, release notes, documentation, " +
+			"and any response over ~70 tokens. Cheaper than Claude. " +
+			"Supports images (file path, https:// URL, data:image/ URI).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in *llm.Input) (*mcp.CallToolResult, any, error) {
 		if in.Prompt == "" {
 			return &mcp.CallToolResult{
