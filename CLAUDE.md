@@ -6,13 +6,15 @@ Internal documentation for the AI coding assistant. README.md is for human reade
 
 `call_local_llm` (Gemma 4 26B, 4-bit) is available — use it aggressively to save Anthropic token costs.
 
-### NEVER generate these yourself — always delegate to `call_local_llm`:
+Break-even point: ~280 chars (~70 tokens) of expected output. Below this, tool call overhead makes direct generation cheaper.
+
+### Delegate to `call_local_llm` when expected output exceeds ~280 chars:
 - GitHub issue bodies and PR descriptions
 - Multi-line commit message bodies (subject line is OK to write directly)
-- Translations of any text
+- Translations of substantial text
 - Summarization of files, logs, diffs, or text content
 - Drafts of documentation paragraphs, README sections, doc comments
-- Standalone Q&A that doesn't require codebase context
+- Long-form Q&A or explanations (not short one-liners)
 
 ### Handle directly only when:
 - Reasoning over tool results just received in this conversation
