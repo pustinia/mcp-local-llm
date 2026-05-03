@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -148,6 +149,22 @@ func buildImageContent(prompt string, images []string, maxImages int) ([]content
 		})
 	}
 	return parts, nil
+}
+
+func validatePath(path, workDir string) (string, error) {
+	if workDir == "" {
+		return "", fmt.Errorf("validatePath: workDir must not be empty")
+	}
+	workDir = filepath.Clean(workDir)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workDir, path)
+	} else {
+		path = filepath.Clean(path)
+	}
+	if path != workDir && !strings.HasPrefix(path, workDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q is outside work directory %q", path, workDir)
+	}
+	return path, nil
 }
 
 func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {

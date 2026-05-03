@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/base64"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,5 +136,74 @@ func TestBuildImageContent_FileNotFound(t *testing.T) {
 	_, err := buildImageContent("hello", []string{"/nonexistent/path/image.png"}, 5)
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestValidatePath_RelativeResolved(t *testing.T) {
+	dir := t.TempDir()
+	result, err := validatePath("output.txt", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := filepath.Join(dir, "output.txt")
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestValidatePath_AbsWithinDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subdir", "file.txt")
+	result, err := validatePath(path, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != path {
+		t.Errorf("expected %q, got %q", path, result)
+	}
+}
+
+func TestValidatePath_AbsOutsideDir(t *testing.T) {
+	dir := t.TempDir()
+	_, err := validatePath("/etc/passwd", dir)
+	if err == nil {
+		t.Fatal("expected error for path outside work dir")
+	}
+	if !strings.Contains(err.Error(), "outside") {
+		t.Errorf("expected error to mention 'outside', got: %v", err)
+	}
+}
+
+func TestValidatePath_DotDotEscape(t *testing.T) {
+	dir := t.TempDir()
+	_, err := validatePath("../escape.txt", dir)
+	if err == nil {
+		t.Fatal("expected error for dot-dot escape")
+	}
+	if !strings.Contains(err.Error(), "outside") {
+		t.Errorf("expected error to mention 'outside', got: %v", err)
+	}
+}
+
+func TestValidatePath_DotDotAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/../escape.txt"
+	_, err := validatePath(path, dir)
+	if err == nil {
+		t.Fatal("expected error for absolute path that escapes via ../")
+	}
+	if !strings.Contains(err.Error(), "outside") {
+		t.Errorf("expected error to mention 'outside', got: %v", err)
+	}
+}
+
+func TestValidatePath_ExactWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	result, err := validatePath(dir, dir)
+	if err != nil {
+		t.Fatalf("work dir root should be valid: %v", err)
+	}
+	if result != filepath.Clean(dir) {
+		t.Errorf("expected %q, got %q", filepath.Clean(dir), result)
 	}
 }
