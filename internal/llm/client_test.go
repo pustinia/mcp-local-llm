@@ -207,3 +207,102 @@ func TestValidatePath_ExactWorkDir(t *testing.T) {
 		t.Errorf("expected %q, got %q", filepath.Clean(dir), result)
 	}
 }
+
+func TestBuildPromptWithFiles_Single(t *testing.T) {
+	f, err := os.CreateTemp("", "llm-test-*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	content := "package main\n\nfunc main() {}"
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	result, err := buildPromptWithFiles("summarize this", []string{f.Name()}, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "summarize this\n\n[file: " + f.Name() + "]\n" + content + "\n"
+	if result != expected {
+		t.Errorf("expected:\n%q\ngot:\n%q", expected, result)
+	}
+}
+
+func TestBuildPromptWithFiles_Multiple(t *testing.T) {
+	f1, err := os.CreateTemp("", "llm-test-a-*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f1.Name())
+	f2, err := os.CreateTemp("", "llm-test-b-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f2.Name())
+	if _, err := f1.WriteString("content A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f2.WriteString("content B"); err != nil {
+		t.Fatal(err)
+	}
+	f1.Close()
+	f2.Close()
+
+	result, err := buildPromptWithFiles("my prompt", []string{f1.Name(), f2.Name()}, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[file: "+f1.Name()+"]") {
+		t.Errorf("missing header for file1 in: %s", result)
+	}
+	if !strings.Contains(result, "[file: "+f2.Name()+"]") {
+		t.Errorf("missing header for file2 in: %s", result)
+	}
+	idx1 := strings.Index(result, "[file: "+f1.Name()+"]")
+	idx2 := strings.Index(result, "[file: "+f2.Name()+"]")
+	if idx1 < 0 || idx2 < 0 || idx1 > idx2 {
+		t.Errorf("file1 header should appear before file2 header in result")
+	}
+}
+
+func TestBuildPromptWithFiles_FileNotFound(t *testing.T) {
+	_, err := buildPromptWithFiles("prompt", []string{"/nonexistent/path/missing.go"}, 0)
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "input_files[0]: file not found:") {
+		t.Errorf("expected error to contain 'input_files[0]: file not found:', got: %v", err)
+	}
+}
+
+func TestBuildPromptWithFiles_SizeExceeds(t *testing.T) {
+	f, err := os.CreateTemp("", "llm-test-large-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(strings.Repeat("x", 100)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	_, err = buildPromptWithFiles("prompt", []string{f.Name()}, 50)
+	if err == nil {
+		t.Fatal("expected error when total size exceeds limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Errorf("expected error to mention 'exceeds limit', got: %v", err)
+	}
+}
+
+func TestBuildPromptWithFiles_Empty(t *testing.T) {
+	result, err := buildPromptWithFiles("my prompt", []string{}, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "my prompt" {
+		t.Errorf("expected prompt unchanged, got: %q", result)
+	}
+}

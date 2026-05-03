@@ -167,6 +167,49 @@ func validatePath(path, workDir string) (string, error) {
 	return path, nil
 }
 
+func buildPromptWithFiles(prompt string, files []string, maxBytes int) (string, error) {
+	if len(files) == 0 {
+		return prompt, nil
+	}
+	type fileData struct {
+		path    string
+		content []byte
+	}
+	var total int
+	loaded := make([]fileData, 0, len(files))
+	for i, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", fmt.Errorf("input_files[%d]: file not found: %s", i, path)
+			}
+			if os.IsPermission(err) {
+				return "", fmt.Errorf("input_files[%d]: permission denied: %s", i, path)
+			}
+			return "", fmt.Errorf("input_files[%d]: read failed: %w", i, err)
+		}
+		total += len(data)
+		if maxBytes > 0 && total > maxBytes {
+			return "", fmt.Errorf("input_files total size (%d bytes) exceeds limit (%d bytes). "+
+				"Reduce file count or set LOCAL_LLM_MAX_INPUT_BYTES to increase limit.", total, maxBytes)
+		}
+		loaded = append(loaded, fileData{path: path, content: data})
+	}
+	var sb strings.Builder
+	sb.WriteString(prompt)
+	for _, f := range loaded {
+		sb.WriteString("\n\n[file: ")
+		sb.WriteString(f.path)
+		sb.WriteString("]\n")
+		sb.Write(f.content)
+	}
+	result := sb.String()
+	if len(result) > 0 && result[len(result)-1] != '\n' {
+		result += "\n"
+	}
+	return result, nil
+}
+
 func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if c.sem != nil {
 		select {
