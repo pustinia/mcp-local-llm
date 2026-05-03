@@ -37,6 +37,8 @@ All settings are controlled via environment variables. The binary has no config 
 | `LOCAL_LLM_MAX_CONCURRENT` | `0` (unlimited) | Max concurrent requests to the LLM server (recommended: `2`) |
 | `LOCAL_LLM_FILTER_THINKING` | `true` | Strip `<\|channel>thought...<channel\|>` thinking blocks from responses. Can be overridden per-call via the `filter_thinking` parameter. |
 | `LOCAL_LLM_MAX_IMAGES` | `5` | Maximum images per `call_local_llm` call. Set to `0` to disable image input. Negative values allow unlimited images. |
+| `LOCAL_LLM_MAX_INPUT_BYTES` | `98304` | Maximum combined size of all `input_files` in bytes (96 KB ≈ 24,000 tokens). Set to `0` for no limit (not recommended — server may crash on large inputs). |
+| `LOCAL_LLM_WORK_DIR` | binary directory | Base directory for all `input_files` and `output_file` paths. All paths must resolve within this directory; relative paths are resolved against it. Prevents access outside the designated workspace. |
 
 Copy `.env.example` to `.env` for reference (the binary itself reads from the process environment, not a file).
 
@@ -75,6 +77,9 @@ Calls the local LLM and returns its response as plain text. Each response includ
 | `max_tokens` | no | Override the default token limit for this call |
 | `filter_thinking` | no | Override server-level thinking block filtering for this call (`true` = filter, `false` = keep). Omit to use the server default (`LOCAL_LLM_FILTER_THINKING`). |
 | `images` | no | List of images to send with the prompt. Each entry can be a file path, an `https://` URL, or a `data:image/...;base64,...` URI. Mixed formats allowed. Maximum per call is controlled by `LOCAL_LLM_MAX_IMAGES`. |
+| `input_files` | no | List of file paths for the MCP server to read and include in the prompt. File contents are appended after `prompt`, keeping them out of Claude's context window. All paths must be within `LOCAL_LLM_WORK_DIR`. Combined size is limited by `LOCAL_LLM_MAX_INPUT_BYTES`. |
+| `output_file` | no | File path to write the LLM response to. When set, returns `"saved N bytes to path"` instead of the full response, keeping large outputs out of Claude's context window. Must be within `LOCAL_LLM_WORK_DIR`. Parent directory must exist. |
+| `append` | no | When `true`, appends to an existing `output_file` instead of overwriting. Ignored when `output_file` is not set. Default: `false`. |
 
 **Recommended use cases**
 
