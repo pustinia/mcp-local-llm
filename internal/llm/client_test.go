@@ -306,3 +306,67 @@ func TestBuildPromptWithFiles_Empty(t *testing.T) {
 		t.Errorf("expected prompt unchanged, got: %q", result)
 	}
 }
+
+func TestWriteOutput_NewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.txt")
+
+	summary, err := writeOutput(path, "hello world", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("expected %q, got %q", "hello world", string(got))
+	}
+	if !strings.Contains(summary, "saved 11 bytes") {
+		t.Errorf("expected summary to contain 'saved 11 bytes', got: %s", summary)
+	}
+}
+
+func TestWriteOutput_Overwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.txt")
+	if err := os.WriteFile(path, []byte("old content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := writeOutput(path, "new content", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "new content" {
+		t.Errorf("expected overwrite, got %q", string(got))
+	}
+}
+
+func TestWriteOutput_Append(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.txt")
+	if err := os.WriteFile(path, []byte("first\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := writeOutput(path, "second\n", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "first\nsecond\n" {
+		t.Errorf("expected appended content, got %q", string(got))
+	}
+}
+
+func TestWriteOutput_DirNotFound(t *testing.T) {
+	_, err := writeOutput("/nonexistent/dir/output.txt", "content", false)
+	if err == nil {
+		t.Fatal("expected error when parent directory missing")
+	}
+	if !strings.Contains(err.Error(), "output_file") {
+		t.Errorf("expected error to contain 'output_file', got: %v", err)
+	}
+}

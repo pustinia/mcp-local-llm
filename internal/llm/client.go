@@ -210,6 +210,24 @@ func buildPromptWithFiles(prompt string, files []string, maxBytes int) (string, 
 	return result, nil
 }
 
+func writeOutput(path, text string, appendMode bool) (string, error) {
+	if appendMode {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			return "", fmt.Errorf("output_file: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(text); err != nil {
+			return "", fmt.Errorf("output_file: write failed: %w", err)
+		}
+	} else {
+		if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+			return "", fmt.Errorf("output_file: %w", err)
+		}
+	}
+	return fmt.Sprintf("saved %d bytes to %s", len(text), path), nil
+}
+
 func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if c.sem != nil {
 		select {
