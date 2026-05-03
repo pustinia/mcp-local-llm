@@ -130,13 +130,25 @@ func main() {
 		}
 	}
 
-	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking, maxImages)
-
 	usagePath, err := usageFilePath()
 	if err != nil {
 		log.Fatalf("resolve usage file path: %v", err)
 	}
 	stats := loadUsage(usagePath)
+
+	maxInputBytes := 98304
+	if v := os.Getenv("LOCAL_LLM_MAX_INPUT_BYTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			maxInputBytes = n
+		}
+	}
+
+	workDir := filepath.Dir(usagePath)
+	if v := os.Getenv("LOCAL_LLM_WORK_DIR"); v != "" {
+		workDir = v
+	}
+
+	client := llm.NewClient(baseURL, model, maxTokens, timeout, maxConcurrent, filterThinking, maxImages, maxInputBytes, workDir)
 
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "local-llm",
