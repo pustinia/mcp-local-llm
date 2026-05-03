@@ -36,6 +36,9 @@ type Input struct {
 	MaxTokens      int      `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
 	FilterThinking *bool    `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
 	Images         []string `json:"images,omitempty"          jsonschema:"이미지 목록 (파일 경로·URL·base64 data URI 혼합 가능)"`
+	InputFiles     []string `json:"input_files,omitempty"     jsonschema:"읽어서 프롬프트에 포함할 파일 경로 목록. MCP 서버가 직접 읽어 Claude 컨텍스트 절약"`
+	OutputFile     string   `json:"output_file,omitempty"     jsonschema:"결과를 저장할 파일 경로. 지정 시 저장 완료 메시지만 반환 (Claude 컨텍스트 절약)"`
+	Append         bool     `json:"append,omitempty"          jsonschema:"true이면 output_file에 이어쓰기. 기본값 false (덮어쓰기)"`
 }
 
 type chatMessage struct {
@@ -73,11 +76,13 @@ type Client struct {
 	DefaultMaxTokens int
 	FilterThinking   bool
 	MaxImages        int
+	MaxInputBytes    int
+	WorkDir          string
 	httpClient       *http.Client
 	sem              chan struct{} // nil = 무제한
 }
 
-func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int, filterThinking bool, maxImages int) *Client {
+func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxConcurrent int, filterThinking bool, maxImages int, maxInputBytes int, workDir string) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
@@ -91,6 +96,8 @@ func NewClient(baseURL, model string, maxTokens int, timeout time.Duration, maxC
 		DefaultMaxTokens: maxTokens,
 		FilterThinking:   filterThinking,
 		MaxImages:        maxImages,
+		MaxInputBytes:    maxInputBytes,
+		WorkDir:          workDir,
 		httpClient:       &http.Client{Timeout: timeout},
 		sem:              sem,
 	}
@@ -237,18 +244,48 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 			return "", Usage{}, ctx.Err()
 		}
 	}
+
+	// Validate and resolve input file paths against work directory
+	inputFiles := make([]string, len(in.InputFiles))
+	for i, f := range in.InputFiles {
+		p, err := validatePath(f, c.WorkDir)
+		if err != nil {
+			return "", Usage{}, fmt.Errorf("input_files[%d]: %w", i, err)
+		}
+		inputFiles[i] = p
+	}
+
+	// Validate and resolve output file path against work directory
+	outputFile := in.OutputFile
+	if in.OutputFile != "" {
+		p, err := validatePath(in.OutputFile, c.WorkDir)
+		if err != nil {
+			return "", Usage{}, fmt.Errorf("output_file: %w", err)
+		}
+		outputFile = p
+	}
+
+	prompt := in.Prompt
+	if len(inputFiles) > 0 {
+		var err error
+		prompt, err = buildPromptWithFiles(in.Prompt, inputFiles, c.MaxInputBytes)
+		if err != nil {
+			return "", Usage{}, err
+		}
+	}
+
 	messages := []chatMessage{}
 	if in.System != "" {
 		messages = append(messages, chatMessage{Role: "system", Content: in.System})
 	}
 	if len(in.Images) > 0 {
-		parts, err := buildImageContent(in.Prompt, in.Images, c.MaxImages)
+		parts, err := buildImageContent(prompt, in.Images, c.MaxImages)
 		if err != nil {
 			return "", Usage{}, err
 		}
 		messages = append(messages, chatMessage{Role: "user", Content: parts})
 	} else {
-		messages = append(messages, chatMessage{Role: "user", Content: in.Prompt})
+		messages = append(messages, chatMessage{Role: "user", Content: prompt})
 	}
 
 	model := in.Model
@@ -308,5 +345,14 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if filterThinking {
 		content = strings.TrimSpace(thinkingRe.ReplaceAllString(content, ""))
 	}
+
+	if outputFile != "" {
+		summary, err := writeOutput(outputFile, content, in.Append)
+		if err != nil {
+			return "", Usage{}, err
+		}
+		return summary, result.Usage, nil
+	}
+
 	return content, result.Usage, nil
 }
