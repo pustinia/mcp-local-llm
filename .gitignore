@@ -4,3 +4,4 @@ bin/
 .mcp.json
 .claude/settings.local.json
 .worktrees/
+*.wav
