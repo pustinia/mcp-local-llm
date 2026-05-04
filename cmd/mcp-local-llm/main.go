@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,10 +26,14 @@ var (
 const (
 	defaultBaseURL = "http://localhost:8000"
 	defaultModel   = "mlx-community/gemma-4-26b-a4b-it-4bit"
+	saverInterval  = 30 * time.Second
 )
+
+type llmUsage = llm.Usage
 
 type usageStats struct {
 	mu               sync.Mutex
+	dirty            bool
 	TotalCalls       int `json:"total_calls"`
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -52,13 +58,14 @@ func loadUsage(path string) *usageStats {
 	return s
 }
 
-func (s *usageStats) add(u llm.Usage) {
+func (s *usageStats) add(u llmUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.TotalCalls++
 	s.PromptTokens += u.PromptTokens
 	s.CompletionTokens += u.CompletionTokens
 	s.TotalTokens += u.TotalTokens
+	s.dirty = true
 }
 
 func (s *usageStats) save(path string) error {
@@ -75,10 +82,42 @@ func (s *usageStats) save(path string) error {
 	return os.Rename(tmp, path)
 }
 
+func (s *usageStats) flushIfDirty(path string) {
+	s.mu.Lock()
+	if !s.dirty {
+		s.mu.Unlock()
+		return
+	}
+	s.dirty = false
+	s.mu.Unlock()
+	if err := s.save(path); err != nil {
+		log.Printf("usage save: %v", err)
+	}
+}
+
 func (s *usageStats) snapshot() (calls, prompt, completion, total int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.TotalCalls, s.PromptTokens, s.CompletionTokens, s.TotalTokens
+}
+
+func startSaver(stats *usageStats, path string, interval time.Duration) (stop func()) {
+	quit := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				stats.flushIfDirty(path)
+			case <-quit:
+				stats.flushIfDirty(path)
+				return
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(quit) }) }
 }
 
 func envOr(key, fallback string) string {
@@ -177,7 +216,6 @@ func main() {
 			}, nil, nil
 		}
 		stats.add(usage)
-		_ = stats.save(usagePath)
 		result := text + fmt.Sprintf("\n\n[usage: prompt=%d, completion=%d, total=%d]",
 			usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 		return &mcp.CallToolResult{
@@ -197,12 +235,26 @@ func main() {
 		}, nil, nil
 	})
 
+	stop := startSaver(stats, usagePath, saverInterval)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	ctx := context.Background()
 	session, err := s.Connect(ctx, &mcp.StdioTransport{}, nil)
 	if err != nil {
 		log.Fatalf("connect failed: %v", err)
 	}
-	if err := session.Wait(); err != nil {
-		log.Fatalf("session error: %v", err)
+
+	done := make(chan error, 1)
+	go func() { done <- session.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("session error: %v", err)
+		}
+	case <-sigCh:
 	}
+	stop()
 }
