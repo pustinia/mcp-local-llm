@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +19,29 @@ import (
 
 var thinkingRe = regexp.MustCompile(`(?s)<\|channel>thought.*?<channel\|>`)
 
-const defaultTimeout = 5 * time.Minute
+const (
+	defaultTimeout = 5 * time.Minute
+	maxRetries     = 2
+)
+
+var retryDelays = [maxRetries]time.Duration{
+	200 * time.Millisecond,
+	1 * time.Second,
+}
+
+func isRetryable(err error, statusCode int) bool {
+	if statusCode >= 500 {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Temporary() { //nolint:staticcheck
+		return true
+	}
+	return strings.Contains(err.Error(), "connection refused")
+}
 
 type contentPart struct {
 	Type     string    `json:"type"`
@@ -306,23 +330,47 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 		return "", Usage{}, fmt.Errorf("marshal failed: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("create request failed: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
+	var (
+		resp  *http.Response
+		raw   []byte
+		doErr error
+	)
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(retryDelays[attempt-1]):
+			case <-ctx.Done():
+				return "", Usage{}, ctx.Err()
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return "", Usage{}, fmt.Errorf("create request failed: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, doErr = c.httpClient.Do(req)
+		if doErr != nil {
+			if !isRetryable(doErr, 0) {
+				return "", Usage{}, fmt.Errorf("request failed: %w", doErr)
+			}
+			continue
+		}
 
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("read response failed: %w", err)
-	}
+		raw, doErr = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if doErr != nil {
+			return "", Usage{}, fmt.Errorf("read response failed: %w", doErr)
+		}
+		doErr = nil
 
+		if !isRetryable(nil, resp.StatusCode) {
+			break
+		}
+	}
+	if doErr != nil {
+		return "", Usage{}, fmt.Errorf("request failed: %w", doErr)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", Usage{}, fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
 	}
