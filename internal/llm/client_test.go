@@ -513,3 +513,39 @@ func TestCall_ContextCancelledDuringRetry(t *testing.T) {
 		t.Errorf("expected context or 503 error, got: %v", err)
 	}
 }
+
+func TestBuildPromptWithFiles_StatFirstRejectsBeforeRead(t *testing.T) {
+	dir := t.TempDir()
+	large := filepath.Join(dir, "large.txt")
+	if err := os.WriteFile(large, []byte(strings.Repeat("x", 200)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := buildPromptWithFiles("prompt", []string{large}, 50)
+	if err == nil {
+		t.Fatal("expected error when single file exceeds limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Errorf("expected 'exceeds limit', got: %v", err)
+	}
+}
+
+func TestBuildPromptWithFiles_StatFirstSumExceedsLimit(t *testing.T) {
+	dir := t.TempDir()
+	f1 := filepath.Join(dir, "a.txt")
+	f2 := filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(f1, []byte(strings.Repeat("a", 60)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f2, []byte(strings.Repeat("b", 60)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := buildPromptWithFiles("prompt", []string{f1, f2}, 100)
+	if err == nil {
+		t.Fatal("expected error when combined size exceeds limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Errorf("expected 'exceeds limit', got: %v", err)
+	}
+}
