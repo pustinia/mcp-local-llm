@@ -301,12 +301,24 @@ OpenAI TTS API 호환. JSON body 전송.
 | 파라미터 | 타입 | 기본값 | 설명 |
 |---------|------|--------|------|
 | `model` | string | `kokoro` | TTS 모델 별칭 |
-| `input` | string | 필수 | 합성할 텍스트 |
+| `input` | string | 필수 | 합성할 텍스트 (길이 한도는 아래 참고) |
 | `voice` | string | `af_heart` | 음성 ID (모델별 상이) |
 | `speed` | float | `1.0` | 속도 (0.5~2.0) |
 | `response_format` | string | `wav` | `wav` 또는 `mp3` |
 | `lang_code` | string | `a` | 언어 코드 |
 | `volume` | float | `0.9` | 출력 음량 (0.0~1.0). RMS 정규화 후 적용 |
+
+**`input` 길이 한도:**
+
+- 서버 설정에 따라 상한이 정해진다. 기본 구성 예: **`input`은 최대 4096자**까지(초과 시 합성하지 않음).
+- 한도 초과 시 **HTTP 413**, 본문 예:
+
+```json
+{"detail":"TTS input too long: 4097 characters exceeds the configured limit of 4096 characters."}
+```
+
+- 모델·언어·목소리(`kokoro`, `chatterbox-multilingual`, `iu` 등)와 무관하게 **동일 한도**가 적용되는 경우가 일반적이다. 실제 값은 `/v1/status` 또는 서버 설정을 확인하거나, 경계 길이로 요청해 응답 코드를 보면 된다.
+- 출력 오디오 **재생 시간**은 글자 수·문장·`speed`·모델에 따라 달라지며, `input` 한도와 별개다. 긴 음성은 텍스트를 나눠 여러 번 호출한 뒤 파일을 이어붙이는 방식을 검토한다.
 
 **지원 모델:**
 

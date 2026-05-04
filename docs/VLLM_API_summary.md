@@ -12,7 +12,7 @@ vllm-mlx 서버에서 제공하는 모든 API 엔드포인트를 카테고리별
 | **채팅 (Anthropic)** | POST | `/v1/messages/count_tokens` | 입력 토큰 수 계산 |
 | **텍스트 완성** | POST | `/v1/completions` | 레거시 텍스트 완성 (OpenAI 호환) |
 | **STT (음성 인식)** | POST | `/v1/audio/transcriptions` | 음성 파일을 텍스트로 변환 |
-| **TTS (음성 합성)** | POST | `/v1/audio/speech` | 텍스트를 음성으로 변환 |
+| **TTS (음성 합성)** | POST | `/v1/audio/speech` | 텍스트를 음성으로 변환 (`input` 최대 글자수는 서버 설정; 초과 시 413. 예: 4096자) |
 | **TTS (음성 합성)** | GET | `/v1/audio/voices` | 사용 가능한 TTS 목소리 목록 조회 |
 | **MCP** | GET | `/v1/mcp/tools` | 연결된 MCP 서버의 도구 목록 조회 |
 | **MCP** | GET | `/v1/mcp/servers` | 연결된 MCP 서버 목록 조회 |
