@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +19,29 @@ import (
 
 var thinkingRe = regexp.MustCompile(`(?s)<\|channel>thought.*?<channel\|>`)
 
-const defaultTimeout = 5 * time.Minute
+const (
+	defaultTimeout = 5 * time.Minute
+	maxRetries     = 2
+)
+
+var retryDelays = [maxRetries]time.Duration{
+	200 * time.Millisecond,
+	1 * time.Second,
+}
+
+func isRetryable(err error, statusCode int) bool {
+	if statusCode >= 500 {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Temporary() { //nolint:staticcheck
+		return true
+	}
+	return strings.Contains(err.Error(), "connection refused")
+}
 
 type contentPart struct {
 	Type     string    `json:"type"`

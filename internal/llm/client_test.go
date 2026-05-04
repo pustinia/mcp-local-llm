@@ -1,11 +1,17 @@
 package llm
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestBuildImageContent_URL(t *testing.T) {
@@ -368,5 +374,142 @@ func TestWriteOutput_DirNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "output_file") {
 		t.Errorf("expected error to contain 'output_file', got: %v", err)
+	}
+}
+
+func TestIsRetryable_5xx(t *testing.T) {
+	for _, code := range []int{500, 502, 503, 504} {
+		if !isRetryable(nil, code) {
+			t.Errorf("expected 5xx %d to be retryable", code)
+		}
+	}
+}
+
+func TestIsRetryable_NonRetryableStatus(t *testing.T) {
+	for _, code := range []int{0, 200, 400, 404, 422} {
+		if isRetryable(nil, code) {
+			t.Errorf("expected status %d to be non-retryable", code)
+		}
+	}
+}
+
+func TestIsRetryable_ConnectionRefused(t *testing.T) {
+	err := fmt.Errorf("dial tcp: connection refused")
+	if !isRetryable(err, 0) {
+		t.Error("expected connection refused error to be retryable")
+	}
+}
+
+func TestIsRetryable_NilError_ZeroStatus(t *testing.T) {
+	if isRetryable(nil, 0) {
+		t.Error("nil error with zero status should not be retryable")
+	}
+}
+
+func TestIsRetryable_NonNetworkError(t *testing.T) {
+	err := fmt.Errorf("some other error")
+	if isRetryable(err, 0) {
+		t.Error("generic non-network error should not be retryable")
+	}
+}
+
+func TestCall_RetriesOn503ThenSucceeds(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	orig := retryDelays
+	retryDelays = [maxRetries]time.Duration{0, 0}
+	t.Cleanup(func() { retryDelays = orig })
+
+	text, _, err := c.Call(context.Background(), &Input{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	if text != "ok" {
+		t.Errorf("expected 'ok', got %q", text)
+	}
+	if attempts.Load() != 3 {
+		t.Errorf("expected 3 attempts, got %d", attempts.Load())
+	}
+}
+
+func TestCall_ExhaustsRetries(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	orig := retryDelays
+	retryDelays = [maxRetries]time.Duration{0, 0}
+	t.Cleanup(func() { retryDelays = orig })
+
+	_, _, err := c.Call(context.Background(), &Input{Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected error after exhausted retries")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("expected 503 in error, got: %v", err)
+	}
+	if attempts.Load() != 3 {
+		t.Errorf("expected 3 attempts (1 + 2 retries), got %d", attempts.Load())
+	}
+}
+
+func TestCall_NoRetryOn4xx(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	orig := retryDelays
+	retryDelays = [maxRetries]time.Duration{0, 0}
+	t.Cleanup(func() { retryDelays = orig })
+
+	_, _, err := c.Call(context.Background(), &Input{Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected error on 400")
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("expected exactly 1 attempt for 4xx, got %d", attempts.Load())
+	}
+}
+
+func TestCall_ContextCancelledDuringRetry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	orig := retryDelays
+	retryDelays = [maxRetries]time.Duration{500 * time.Millisecond, 1 * time.Second}
+	t.Cleanup(func() { retryDelays = orig })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, _, err := c.Call(ctx, &Input{Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !strings.Contains(err.Error(), "context") && !strings.Contains(err.Error(), "503") {
+		t.Errorf("expected context or 503 error, got: %v", err)
 	}
 }
