@@ -202,37 +202,37 @@ func buildPromptWithFiles(prompt string, files []string, maxBytes int) (string, 
 	if len(files) == 0 {
 		return prompt, nil
 	}
-	type fileData struct {
-		path    string
-		content []byte
-	}
-	var total int
-	loaded := make([]fileData, 0, len(files))
+	// Pass 1: stat only — reject before reading if total size exceeds limit
+	var total int64
 	for i, path := range files {
-		data, err := os.ReadFile(path)
+		info, err := os.Stat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return "", fmt.Errorf("input_files[%d]: file not found: %s", i, path)
 			}
+			return "", fmt.Errorf("input_files[%d]: stat failed: %w", i, err)
+		}
+		total += info.Size()
+		if maxBytes > 0 && total > int64(maxBytes) {
+			return "", fmt.Errorf("input_files total size (%d bytes) exceeds limit (%d bytes). "+
+				"Reduce file count or set LOCAL_LLM_MAX_INPUT_BYTES to increase limit.", total, maxBytes)
+		}
+	}
+	// Pass 2: read all files (size already validated)
+	var sb strings.Builder
+	sb.WriteString(prompt)
+	for i, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
 			if os.IsPermission(err) {
 				return "", fmt.Errorf("input_files[%d]: permission denied: %s", i, path)
 			}
 			return "", fmt.Errorf("input_files[%d]: read failed: %w", i, err)
 		}
-		total += len(data)
-		if maxBytes > 0 && total > maxBytes {
-			return "", fmt.Errorf("input_files total size (%d bytes) exceeds limit (%d bytes). "+
-				"Reduce file count or set LOCAL_LLM_MAX_INPUT_BYTES to increase limit.", total, maxBytes)
-		}
-		loaded = append(loaded, fileData{path: path, content: data})
-	}
-	var sb strings.Builder
-	sb.WriteString(prompt)
-	for _, f := range loaded {
 		sb.WriteString("\n\n[file: ")
-		sb.WriteString(f.path)
+		sb.WriteString(path)
 		sb.WriteString("]\n")
-		sb.Write(f.content)
+		sb.Write(data)
 	}
 	result := sb.String()
 	if len(result) > 0 && result[len(result)-1] != '\n' {
