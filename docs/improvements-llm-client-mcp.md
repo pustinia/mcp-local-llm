@@ -184,6 +184,92 @@
 
 ---
 
+## 10. Tool Calling 지원 — 로컬 LLM에게 Claude 도구 위임
+
+**배경:** vllm-mlx 서버는 OpenAI 호환 `tools` / `tool_choice` 파라미터를 완전히 지원한다(실험 확인). 현재 `call_local_llm`은 텍스트 in/out만 처리하며, `chatResponse.choices[0].message.tool_calls`를 무시한다. 이를 활성화하면 아래 세 가지 패턴으로 **Claude 토큰을 대폭 절약**할 수 있다.
+
+### 세 가지 위임 패턴
+
+**패턴 A — Manager-Worker (로컬 LLM이 툴 선택·판단)**
+
+로컬 LLM이 어떤 툴을 어떤 순서로 호출할지 결정하고, Claude는 툴 실행 릴레이만 담당한다.
+
+```
+Claude → call_local_llm(prompt, tools=[Read, Bash, Glob])
+로컬LLM → tool_calls: [Read("main.go"), ...]
+Claude  → 툴 실행 후 call_local_llm(messages=[...tool_result...])
+로컬LLM → 최종 텍스트
+```
+
+- **절약 효과:** 파일 20개 분석 기준 Claude 토큰 약 94% 감소 (41,500 → 2,300)
+- **적합한 태스크:** 반복 파일 읽기, 코드베이스 탐색, 멀티스텝 분석
+
+**패턴 B — Decision-Secretary (Claude가 툴 지정, 로컬 LLM이 인자 생성+합성)**
+
+`tool_choice`로 Claude가 어떤 툴을 쓸지 지시하고, 로컬 LLM은 인자 생성과 최종 답변 합성을 담당한다.
+
+```
+Claude → call_local_llm(prompt, tools=[get_weather], tool_choice="get_weather")
+로컬LLM → tool_calls: [get_weather({"city":"서울"})]
+Claude  → 툴 실행 후 결과 전달
+로컬LLM → 최종 합성 텍스트
+```
+
+- **절약 효과:** 단순 태스크 기준 약 63% 감소
+- **적합한 태스크:** 특정 데이터 1회 조회 + 긴 합성 출력
+
+**패턴 C — Researcher-Writer (Claude가 수집, 로컬 LLM이 보고서 작성)**
+
+Claude가 WebSearch·Bash·Read 등 자신의 툴로 데이터를 수집하고, 결과를 `messages`에 담아 로컬 LLM에 전달하면 로컬 LLM이 합성만 담당한다.
+
+```
+Claude  → WebSearch, Read(코드파일들) 실행
+Claude  → call_local_llm(messages=[수집된_데이터], prompt="보고서 작성")
+로컬LLM → 최종 보고서
+```
+
+- **절약 효과:** 보고서 작성 output 토큰 제거 (Claude output이 가장 비쌈)
+- **적합한 태스크:** 조사+합성 분리 가능한 장문 보고서, 릴리즈 노트 분석
+
+### 구현 범위
+
+**`internal/llm/client.go`**
+
+```go
+// Input에 추가
+Tools      []json.RawMessage `json:"tools,omitempty"`
+ToolChoice interface{}       `json:"tool_choice,omitempty"`
+Messages   []ChatMessage     `json:"messages,omitempty"` // 멀티턴
+
+// chatResponse에 추가
+type toolCall struct {
+    ID       string `json:"id"`
+    Type     string `json:"type"`
+    Function struct {
+        Name      string `json:"name"`
+        Arguments string `json:"arguments"`
+    } `json:"function"`
+}
+// choices[0].message.tool_calls 파싱
+
+// Call() 반환값 변경
+// tool_calls가 있으면 JSON 문자열로 반환 (Claude가 루프 처리)
+```
+
+**`cmd/mcp-local-llm/main.go`**
+
+- `call_local_llm` 툴 설명에 tool calling 사용법 추가
+- tool_calls 응답 시 JSON 그대로 반환 (Claude가 파싱 후 다음 단계 결정)
+
+### 주의사항
+
+- **멀티턴 루프는 Claude가 담당**: MCP 서버는 무상태(stateless) 유지. 루프 오케스트레이션은 Claude가 `call_local_llm`을 반복 호출하는 방식.
+- **`Messages` 파라미터**: system/user/assistant/tool 역할 지원 필요. `Input.System`과 충돌하지 않도록 설계.
+- **하위 호환성**: `tools` 없이 호출하면 기존과 동일하게 동작해야 함.
+- **Gemma thinking 블록**: tool_calls 응답에도 thinking 블록이 붙을 수 있어 `FilterThinking` 적용 필요.
+
+---
+
 ## 관련 파일
 
 | 영역 | 파일 |
@@ -191,5 +277,6 @@
 | MCP 툴, usage 저장 | `cmd/mcp-local-llm/main.go` |
 | HTTP 클라이언트, 프롬프트/이미지/필터 | `internal/llm/client.go` |
 | STT·TTS HTTP (예정) | `internal/llm/` 신규 또는 `client.go` 인접 패키지 — §9 |
+| Tool calling 지원 (예정) | `internal/llm/client.go`, `cmd/mcp-local-llm/main.go` — §10 |
 | 로컬 오디오 API 스펙 | `docs/VLLM_API.md` |
 | 기존 단위 테스트 | `internal/llm/client_test.go` |
