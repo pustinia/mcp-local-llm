@@ -73,21 +73,51 @@ Before calling the LLM, validate total input size:
 //  Reduce file count or set LOCAL_LLM_MAX_INPUT_BYTES to increase limit."
 ```
 
+### Path Security
+
+The MCP server runs as the OS user and can read/write any path that user can access. To prevent accidental or malicious path traversal, all `input_files` and `output_file` paths are validated against a **work directory** before use.
+
+**Work directory:** defaults to the directory containing the MCP binary (same directory as `usage.json`). Override with `LOCAL_LLM_WORK_DIR`.
+
+**Validation rules (applied to every path before I/O):**
+1. Relative paths are resolved against the work directory: `"output.txt"` → `"/work/dir/output.txt"`
+2. The resolved path is normalized with `filepath.Clean()` to collapse `../` sequences
+3. The normalized path must be equal to or start with `workDir + "/"` — any path that escapes the work directory is rejected
+
+```
+"output.txt"                → /work/dir/output.txt          ✅
+"subdir/notes.md"           → /work/dir/subdir/notes.md     ✅
+"../escape.txt"             → /escape.txt                   ❌ outside work dir
+"/etc/passwd"               → /etc/passwd                   ❌ outside work dir
+"/work/dir/../etc/passwd"   → /etc/passwd                   ❌ outside work dir (after Clean)
+```
+
+This is implemented in a standalone `validatePath(path, workDir string) (string, error)` function in `internal/llm/client.go`. `Call()` validates all paths before passing them to `buildPromptWithFiles` or `writeOutput`.
+
 ### Error Handling
 
 | Situation | Error Message |
 |-----------|---------------|
+| Path outside work dir (input) | `input_files[N]: path "/etc/passwd" is outside work directory "/work/dir"` |
+| Path outside work dir (output) | `output_file: path "/etc/passwd" is outside work directory "/work/dir"` |
 | File not found | `input_files[N]: file not found: path/to/file` |
 | Permission denied (read) | `input_files[N]: permission denied: path/to/file` |
 | Total size exceeded | `input_files total size (X bytes) exceeds limit (Y bytes)` |
-| Output dir not found | `output_file: directory not found: path/to/dir` |
-| Permission denied (write) | `output_file: permission denied: path/to/file` |
+| Output dir not found | `output_file: open ...: no such file or directory` |
+| Permission denied (write) | `output_file: open ...: permission denied` |
 
 All errors returned as `CallToolResult{IsError: true}` per project convention.
 
 ## Testing
 
-9 unit tests in `internal/llm/client_test.go`:
+14 unit tests in `internal/llm/client_test.go`:
+
+**validatePath (5 tests):**
+- `TestValidatePath_RelativeResolved` — relative path resolved to workDir
+- `TestValidatePath_AbsWithinDir` — absolute path within workDir is allowed
+- `TestValidatePath_AbsOutsideDir` — absolute path outside workDir is rejected
+- `TestValidatePath_DotDotEscape` — `../` relative escape is rejected
+- `TestValidatePath_DotDotAbsolute` — `/../` absolute escape rejected after Clean
 
 **input_files (5 tests):**
 - `TestBuildPromptWithFiles_Single` — single file, header format verified
@@ -107,3 +137,4 @@ All errors returned as `CallToolResult{IsError: true}` per project convention.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOCAL_LLM_MAX_INPUT_BYTES` | `98304` | Maximum combined size of all input_files in bytes (96KB ≈ 24,000 tokens). Set to 0 for no limit (not recommended — server may crash). |
+| `LOCAL_LLM_WORK_DIR` | binary directory | Base directory for all `input_files` and `output_file` paths. All paths must resolve within this directory. Relative paths are resolved against it. |
