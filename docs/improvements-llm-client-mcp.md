@@ -4,21 +4,9 @@
 
 ---
 
-## 1. `usage.json` 매 호출 디스크 저장 — 핵심 경로의 불필요한 I/O
+## ~~1. `usage.json` 매 호출 디스크 저장 — 핵심 경로의 불필요한 I/O~~ ✅ 완료
 
-**위치:** [`cmd/mcp-local-llm/main.go`](../cmd/mcp-local-llm/main.go) — `call_local_llm` 툴 핸들러에서 매 LLM 호출마다 `stats.save(usagePath)` 호출.
-
-**현재 동작:** `WriteFile(.tmp)` + `Rename` 등이 응답 반환 직전에 동기 실행된다.
-
-**문제:**
-
-- 동시 호출 시 `save()`가 뮤텍스 해제 뒤 파일 I/O를 수행하면, 여러 고루틴이 같은 파일에 경쟁적으로 쓰기 → **마지막 쓰기 승, 카운트 손실 가능**.
-- 핵심 경로에서 저장 오류를 `_`로 무시해 **안전성·관측 가능성**이 낮다.
-
-**개선 방향:**
-
-- **디바운스 / 주기 저장:** 별도 고루틴에서 N초마다, 변경이 있을 때만 저장. 툴 핸들러 핵심 경로에서는 `save` 제거.
-- **Graceful shutdown:** `signal.Notify(SIGINT/SIGTERM)` 후 마지막 flush. 디바운스 도입 시 프로세스 종료 시 통계 유실 방지에 필요.
+`startSaver` (30초 ticker + `flushIfDirty`)로 디바운스 저장 구현. 툴 핸들러에서 `save()` 직접 호출 제거. SIGINT/SIGTERM graceful shutdown 포함.
 
 ---
 
@@ -36,17 +24,9 @@
 
 ---
 
-## 3. 트랜션트 오류 재시도 부재 — 신뢰성
+## ~~3. 트랜션트 오류 재시도 부재 — 신뢰성~~ ✅ 완료
 
-**위치:** [`internal/llm/client.go`](../internal/llm/client.go) — `http.Client.Do` 실패 또는 5xx 응답 시 즉시 에러 반환.
-
-**문제:** vllm-mlx가 일시적으로 불안정할 때(5xx, KV/OOM 직후, 연결 거절 등) MCP 사용자에게 바로 실패로 전달된다.
-
-**개선 방향:**
-
-- **Bounded retry:** 5xx, 일시적 `net.Error`, `connection refused` 등에 한해 최대 2회, 200ms → 1s 정도 백오프.
-- POST이지만 동일 프롬프트 재시도는 운영상 허용 가능한 경우가 많다(출력은 원래 비결정적).
-- **`context.Context` 취소** 시 재시도 중단.
+`maxRetries=2`, `retryDelays=[200ms, 1s]`, `isRetryable()` 구현. 5xx·`net.Error`·`connection refused` 대상, `context.Context` 취소 시 중단.
 
 ---
 
@@ -64,16 +44,9 @@
 
 ---
 
-## 5. `buildPromptWithFiles` — 한도 초과로 거절될 파일도 전부 읽음
+## ~~5. `buildPromptWithFiles` — 한도 초과로 거절될 파일도 전부 읽음~~ ✅ 완료
 
-**위치:** [`internal/llm/client.go`](../internal/llm/client.go) — `buildPromptWithFiles`: `os.ReadFile` 후 누적 바이트가 `maxBytes`를 넘으면 에러.
-
-**문제:** 단일 대용량 파일이면 **전부 읽은 뒤**에야 초과를 감지할 수 있어 I/O·메모리 낭비.
-
-**개선 방향:**
-
-- **1패스:** `os.Stat`으로 각 파일 크기 합산 → `maxBytes` 초과 시 즉시 에러.
-- **2패스:** 통과한 경우에만 `os.ReadFile`로 내용 로드.
+2-pass 구조 도입: Pass 1에서 `os.Stat` 합산 → 초과 시 즉시 에러, Pass 2에서 실제 `os.ReadFile`.
 
 ---
 
@@ -184,6 +157,14 @@
 
 ---
 
+## ~~10. Tool Calling 지원 — 로컬 LLM에게 Claude 도구 위임~~ ✅ 완료 (패턴 A)
+
+패턴 A (Manager-Worker) 구현 완료. `Input`에 `Tools`, `ToolChoice`, `Messages` 필드 추가. `chatResponse`에 `tool_calls` 파싱 추가. `Call()` 에서 `tool_calls` 있으면 JSON 문자열 반환 — Claude가 루프 오케스트레이션 담당. `messages` 제공 시 멀티턴 히스토리 그대로 전달. 하위 호환성 유지 (`tools` 없으면 기존 동작 동일).
+
+패턴 B·C는 동일 구현으로 이미 동작함 (`tool_choice` 파라미터, `messages` 파라미터 각각 활용).
+
+---
+
 ## 관련 파일
 
 | 영역 | 파일 |
@@ -191,5 +172,6 @@
 | MCP 툴, usage 저장 | `cmd/mcp-local-llm/main.go` |
 | HTTP 클라이언트, 프롬프트/이미지/필터 | `internal/llm/client.go` |
 | STT·TTS HTTP (예정) | `internal/llm/` 신규 또는 `client.go` 인접 패키지 — §9 |
+| Tool calling 지원 | `internal/llm/client.go`, `cmd/mcp-local-llm/main.go` — §10 ✅ |
 | 로컬 오디오 API 스펙 | `docs/VLLM_API.md` |
 | 기존 단위 테스트 | `internal/llm/client_test.go` |
