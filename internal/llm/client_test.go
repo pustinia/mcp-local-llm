@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -547,5 +549,181 @@ func TestBuildPromptWithFiles_StatFirstSumExceedsLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds limit") {
 		t.Errorf("expected 'exceeds limit', got: %v", err)
+	}
+}
+
+func TestCall_WithTools_ReturnsToolCallsJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		if _, ok := req["tools"]; !ok {
+			t.Error("expected 'tools' in request body")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices":[{"message":{"content":"","tool_calls":[{
+				"id":"tc1","type":"function",
+				"function":{"name":"Read","arguments":"{\"path\":\"main.go\"}"}
+			}]}}],
+			"usage":{}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+
+	result, _, err := c.Call(context.Background(), &Input{
+		Prompt: "analyze main.go",
+		Tools:  `[{"type":"function","function":{"name":"Read","parameters":{}}}]`,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var calls []toolCall
+	if err := json.Unmarshal([]byte(result), &calls); err != nil {
+		t.Fatalf("expected tool_calls JSON, got: %s — parse error: %v", result, err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].ID != "tc1" {
+		t.Errorf("expected id 'tc1', got %q", calls[0].ID)
+	}
+	if calls[0].Function.Name != "Read" {
+		t.Errorf("expected function name 'Read', got %q", calls[0].Function.Name)
+	}
+	if calls[0].Function.Arguments != `{"path":"main.go"}` {
+		t.Errorf("unexpected arguments: %s", calls[0].Function.Arguments)
+	}
+}
+
+func TestCall_WithTools_TextResponseReturnsContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"plain answer"}}],"usage":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+
+	result, _, err := c.Call(context.Background(), &Input{
+		Prompt: "hello",
+		Tools:  `[{"type":"function","function":{"name":"Read","parameters":{}}}]`,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "plain answer" {
+		t.Errorf("expected 'plain answer', got %q", result)
+	}
+}
+
+func TestCall_WithMessages_SendsHistoryDirectly(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"final answer"}}],"usage":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	messagesJSON := `[
+		{"role":"user","content":"analyze main.go"},
+		{"role":"assistant","tool_calls":[{"id":"tc1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"main.go\"}"}}]},
+		{"role":"tool","content":"package main...","tool_call_id":"tc1"}
+	]`
+
+	result, _, err := c.Call(context.Background(), &Input{
+		Prompt:   "this should be ignored",
+		Messages: messagesJSON,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "final answer" {
+		t.Errorf("expected 'final answer', got %q", result)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(capturedBody, &req); err != nil {
+		t.Fatalf("failed to parse captured request: %v", err)
+	}
+	msgs, ok := req["messages"].([]interface{})
+	if !ok {
+		t.Fatalf("expected messages array in request, got: %T", req["messages"])
+	}
+	if len(msgs) != 3 {
+		t.Errorf("expected 3 messages, got %d", len(msgs))
+	}
+}
+
+func TestCall_ToolCallsSkipsOutputFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices":[{"message":{"content":"","tool_calls":[{
+				"id":"tc1","type":"function","function":{"name":"Read","arguments":"{}"}
+			}]}}],
+			"usage":{}
+		}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, dir)
+	outPath := filepath.Join(dir, "out.txt")
+
+	result, _, err := c.Call(context.Background(), &Input{
+		Prompt:     "hello",
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
+		t.Error("output_file must not be written when tool_calls are returned")
+	}
+	var calls []toolCall
+	if err := json.Unmarshal([]byte(result), &calls); err != nil {
+		t.Fatalf("expected tool_calls JSON, got: %s", result)
+	}
+}
+
+func TestCall_ToolChoiceIncludedInRequest(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-model", 0, 0, 0, false, 5, 0, t.TempDir())
+	_, _, err := c.Call(context.Background(), &Input{
+		Prompt:     "hello",
+		ToolChoice: "auto",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(capturedBody, &req); err != nil {
+		t.Fatalf("failed to parse captured request: %v", err)
+	}
+	if req["tool_choice"] != "auto" {
+		t.Errorf("expected tool_choice='auto', got: %v", req["tool_choice"])
 	}
 }
