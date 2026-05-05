@@ -10,17 +10,9 @@
 
 ---
 
-## 2. 이미지 base64 인코딩의 메모리 이중·삼중 점유
+## ~~2. 이미지 base64 인코딩의 메모리 이중·삼중 점유~~ ❌ 오버엔지니어링
 
-**위치:** [`internal/llm/client.go`](../internal/llm/client.go) — `readImageAsDataURI` (파일 전체 `io.ReadAll` → `base64.StdEncoding.EncodeToString` → `chatRequest` JSON marshal).
-
-**현재 동작:** 큰 이미지일수록 원본 바이트 + base64 문자열 + JSON 바디까지 피크 메모리가 커진다 (예: 5MB 이미지면 대략 15MB+ 수준까지 가능).
-
-**개선 방향:**
-
-- **`io.Pipe` + `base64.NewEncoder`** 로 HTTP 요청 본문에 스트리밍하여 중간 대형 문자열 할당을 줄인다.
-- 또는 최소한 **사전 크기 계산 후 단일 `[]byte` 버퍼**에 인코딩해 `EncodeToString`의 추가 할당을 줄인다.
-- **`LOCAL_LLM_MAX_IMAGES`** 기본값(예: 5)과 함께 쓰일 때 효과가 배로 커진다.
+이미 20MB 상한(`readImageAsDataURI`)과 `LOCAL_LLM_MAX_IMAGES=5` 기본값이 있어 피크 메모리가 문제가 될 실제 시나리오가 드물다. `io.Pipe` 스트리밍은 복잡도 대비 체감 효과가 낮다.
 
 ---
 
@@ -30,17 +22,9 @@
 
 ---
 
-## 4. 입력 토큰 사전 추정 — 서버 OOM/한도 초과 완화
+## ~~4. 입력 토큰 사전 추정 — 서버 OOM/한도 초과 완화~~ ❌ 오버엔지니어링
 
-**배경:** 긴 입력 + 큰 `max_tokens` 조합에서 vllm-mlx(Metal) OOM 등이 클라이언트에서 사전에 막기 어렵다.
-
-**위치:** [`internal/llm/client.go`](../internal/llm/client.go) — `Call()` 진입부 근처.
-
-**개선 방향:**
-
-- `prompt` + `input_files` 내용 + `system` 등 **합산 문자 수**로 토큰을 거칠게 추정 (예: `chars / 3.5`).
-- **`LOCAL_LLM_SERVER_TOKEN_LIMIT`** (또는 유사 이름) 환경 변수로 서버가 허용하는 **요청 전체 토큰 상한**을 받는다.
-- `추정 입력 토큰 + (요청 max_tokens 또는 기본 max_tokens) > 한도`이면 **요청 전 명시적 에러**로 거절해, 서버 프로세스를 죽이는 패턴을 줄인다.
+이미 `LOCAL_LLM_MAX_INPUT_BYTES`가 실질적인 방어선 역할을 하고 있어, 오차가 큰 추정치를 기반으로 사용자 설정까지 요구하는 추가 로직을 도입하는 것은 실효성이 낮다.
 
 ---
 
@@ -50,15 +34,9 @@
 
 ---
 
-## 6. 세마포어 획득 순서 — 저비용 검증이 LLM 슬롯 뒤로 밀림
+## ~~6. 세마포어 획득 순서 — 저비용 검증이 LLM 슬롯 뒤로 밀림~~ ❌ 오버엔지니어링
 
-**위치:** [`internal/llm/client.go`](../internal/llm/client.go) — `Call()`에서 동시성 세마포어를 먼저 잡고, 그 다음 `validatePath` 등을 수행.
-
-**문제:** 잘못된 경로 등 **즉시 실패** 케이스가 활성 LLM 요청 뒤에 대기할 수 있다 (`LOCAL_LLM_MAX_CONCURRENT` 사용 시).
-
-**개선 방향:**
-
-- 경로 검증·파일 존재 등 **저비용·결정적 검증**을 세마포어 획득 **이전**에 수행하고, HTTP 호출 직전에만 세마포어를 잡는 구조로 재배치한다.
+`MAX_CONCURRENT` 설정 상태에서 잘못된 경로 호출이 동시에 들어와야 발생하는 시나리오로, 현실적 빈도가 매우 낮다. 코드 구조 복잡도 증가 대비 실익이 없다.
 
 ---
 
