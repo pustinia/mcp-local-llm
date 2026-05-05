@@ -53,16 +53,28 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type Input struct {
-	Prompt         string   `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
-	System         string   `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
-	Model          string   `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
-	MaxTokens      int      `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
-	FilterThinking *bool    `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
-	Images         []string `json:"images,omitempty"          jsonschema:"이미지 목록 (파일 경로·URL·base64 data URI 혼합 가능)"`
-	InputFiles     []string `json:"input_files,omitempty"     jsonschema:"읽어서 프롬프트에 포함할 파일 경로 목록. MCP 서버가 직접 읽어 Claude 컨텍스트 절약"`
-	OutputFile     string   `json:"output_file,omitempty"     jsonschema:"결과를 저장할 파일 경로. 지정 시 저장 완료 메시지만 반환 (Claude 컨텍스트 절약)"`
-	Append         bool     `json:"append,omitempty"          jsonschema:"true이면 output_file에 이어쓰기. 기본값 false (덮어쓰기)"`
+	Prompt         string            `json:"prompt"                    jsonschema:"LLM에 전달할 사용자 메시지,required"`
+	System         string            `json:"system,omitempty"          jsonschema:"시스템 프롬프트 (선택사항)"`
+	Model          string            `json:"model,omitempty"           jsonschema:"사용할 모델 이름 (기본값: gemma-4-26b-a4b-it-4bit)"`
+	MaxTokens      int               `json:"max_tokens,omitempty"      jsonschema:"최대 출력 토큰 수 (생략 시 서버 기본값 사용)"`
+	FilterThinking *bool             `json:"filter_thinking,omitempty" jsonschema:"thinking 블록 필터링 여부 (true=필터, false=유지). 생략 시 서버 기본값(LOCAL_LLM_FILTER_THINKING) 적용"`
+	Images         []string          `json:"images,omitempty"          jsonschema:"이미지 목록 (파일 경로·URL·base64 data URI 혼합 가능)"`
+	InputFiles     []string          `json:"input_files,omitempty"     jsonschema:"읽어서 프롬프트에 포함할 파일 경로 목록. MCP 서버가 직접 읽어 Claude 컨텍스트 절약"`
+	OutputFile     string            `json:"output_file,omitempty"     jsonschema:"결과를 저장할 파일 경로. 지정 시 저장 완료 메시지만 반환 (Claude 컨텍스트 절약)"`
+	Append         bool              `json:"append,omitempty"          jsonschema:"true이면 output_file에 이어쓰기. 기본값 false (덮어쓰기)"`
+	Tools      string `json:"tools,omitempty"       jsonschema:"로컬 LLM에 제공할 툴 스키마 배열 (JSON 문자열). 예: [{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"description\":\"...\",\"parameters\":{...}}}]. 응답에 tool_calls가 있으면 JSON 배열 문자열로 반환됨"`
+	ToolChoice string `json:"tool_choice,omitempty" jsonschema:"툴 선택 방식: \"auto\", \"none\", 또는 {\"type\":\"function\",\"function\":{\"name\":\"toolName\"}}"`
+	Messages   string `json:"messages,omitempty"    jsonschema:"멀티턴 메시지 배열 (JSON 문자열). OpenAI messages format. 제공 시 prompt/system/images/input_files 무시. tool_calls 응답 후 재호출 시 전체 대화 히스토리 전달"`
 }
 
 type chatMessage struct {
@@ -71,9 +83,11 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model     string        `json:"model"`
-	Messages  []chatMessage `json:"messages"`
-	MaxTokens *int          `json:"max_tokens,omitempty"`
+	Model      string            `json:"model"`
+	Messages   interface{}       `json:"messages"`
+	MaxTokens  *int              `json:"max_tokens,omitempty"`
+	Tools      []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice interface{}       `json:"tool_choice,omitempty"`
 }
 
 type Usage struct {
@@ -85,7 +99,8 @@ type Usage struct {
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string     `json:"content"`
+			ToolCalls []toolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
@@ -269,16 +284,6 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 		}
 	}
 
-	// Validate and resolve input file paths against work directory
-	inputFiles := make([]string, len(in.InputFiles))
-	for i, f := range in.InputFiles {
-		p, err := validatePath(f, c.WorkDir)
-		if err != nil {
-			return "", Usage{}, fmt.Errorf("input_files[%d]: %w", i, err)
-		}
-		inputFiles[i] = p
-	}
-
 	// Validate and resolve output file path against work directory
 	outputFile := in.OutputFile
 	if in.OutputFile != "" {
@@ -289,27 +294,66 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 		outputFile = p
 	}
 
-	prompt := in.Prompt
-	if len(inputFiles) > 0 {
-		var err error
-		prompt, err = buildPromptWithFiles(in.Prompt, inputFiles, c.MaxInputBytes)
-		if err != nil {
-			return "", Usage{}, err
+	// Parse tools JSON string → typed slice for chatRequest
+	var tools []map[string]interface{}
+	if in.Tools != "" {
+		if err := json.Unmarshal([]byte(in.Tools), &tools); err != nil {
+			return "", Usage{}, fmt.Errorf("tools: invalid JSON: %w", err)
 		}
 	}
 
-	messages := []chatMessage{}
-	if in.System != "" {
-		messages = append(messages, chatMessage{Role: "system", Content: in.System})
-	}
-	if len(in.Images) > 0 {
-		parts, err := buildImageContent(prompt, in.Images, c.MaxImages)
-		if err != nil {
-			return "", Usage{}, err
+	// Parse tool_choice: try as JSON object first, fall back to plain string
+	var toolChoice interface{}
+	if in.ToolChoice != "" {
+		var obj interface{}
+		if err := json.Unmarshal([]byte(in.ToolChoice), &obj); err == nil {
+			toolChoice = obj
+		} else {
+			toolChoice = in.ToolChoice
 		}
-		messages = append(messages, chatMessage{Role: "user", Content: parts})
+	}
+
+	// Build messages: parse JSON string when provided, else construct from prompt/system/images/input_files
+	var messages interface{}
+	if in.Messages != "" {
+		var parsed []map[string]interface{}
+		if err := json.Unmarshal([]byte(in.Messages), &parsed); err != nil {
+			return "", Usage{}, fmt.Errorf("messages: invalid JSON: %w", err)
+		}
+		messages = parsed
 	} else {
-		messages = append(messages, chatMessage{Role: "user", Content: prompt})
+		inputFiles := make([]string, len(in.InputFiles))
+		for i, f := range in.InputFiles {
+			p, err := validatePath(f, c.WorkDir)
+			if err != nil {
+				return "", Usage{}, fmt.Errorf("input_files[%d]: %w", i, err)
+			}
+			inputFiles[i] = p
+		}
+
+		prompt := in.Prompt
+		if len(inputFiles) > 0 {
+			var err error
+			prompt, err = buildPromptWithFiles(in.Prompt, inputFiles, c.MaxInputBytes)
+			if err != nil {
+				return "", Usage{}, err
+			}
+		}
+
+		chatMsgs := []chatMessage{}
+		if in.System != "" {
+			chatMsgs = append(chatMsgs, chatMessage{Role: "system", Content: in.System})
+		}
+		if len(in.Images) > 0 {
+			parts, err := buildImageContent(prompt, in.Images, c.MaxImages)
+			if err != nil {
+				return "", Usage{}, err
+			}
+			chatMsgs = append(chatMsgs, chatMessage{Role: "user", Content: parts})
+		} else {
+			chatMsgs = append(chatMsgs, chatMessage{Role: "user", Content: prompt})
+		}
+		messages = chatMsgs
 	}
 
 	model := in.Model
@@ -325,7 +369,13 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 		maxTokens = &v
 	}
 
-	body, err := json.Marshal(chatRequest{Model: model, Messages: messages, MaxTokens: maxTokens})
+	body, err := json.Marshal(chatRequest{
+		Model:      model,
+		Messages:   messages,
+		MaxTokens:  maxTokens,
+		Tools:      tools,
+		ToolChoice: toolChoice,
+	})
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("marshal failed: %w", err)
 	}
@@ -385,6 +435,15 @@ func (c *Client) Call(ctx context.Context, in *Input) (string, Usage, error) {
 	if len(result.Choices) == 0 {
 		return "", Usage{}, fmt.Errorf("empty response")
 	}
+	// tool_calls 응답이면 JSON 문자열로 반환 — Claude가 파싱 후 실제 툴 실행 및 재호출
+	if len(result.Choices[0].Message.ToolCalls) > 0 {
+		toolCallsJSON, err := json.Marshal(result.Choices[0].Message.ToolCalls)
+		if err != nil {
+			return "", Usage{}, fmt.Errorf("marshal tool_calls: %w", err)
+		}
+		return string(toolCallsJSON), result.Usage, nil
+	}
+
 	content := result.Choices[0].Message.Content
 	filterThinking := c.FilterThinking
 	if in.FilterThinking != nil {

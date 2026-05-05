@@ -199,7 +199,10 @@ func main() {
 		Description: "ALWAYS use this instead of generating text yourself for: summaries, " +
 			"translations, PR/commit/issue drafts, release notes, documentation, " +
 			"and any response over ~70 tokens. Cheaper than Claude. " +
-			"Supports images (file path, https:// URL, data:image/ URI).",
+			"Supports images (file path, http:// or https:// URL, data:image/ URI). " +
+			"Supports tool calling: pass 'tools' (OpenAI tool schema array) and optionally 'tool_choice'. " +
+			"If the local LLM responds with tool_calls, returns a JSON array string — " +
+			"execute the tools, then call again with 'messages' containing the full conversation history including tool results.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in *llm.Input) (*mcp.CallToolResult, any, error) {
 		if in.Prompt == "" {
 			return &mcp.CallToolResult{

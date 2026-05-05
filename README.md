@@ -76,10 +76,41 @@ Calls the local LLM and returns its response as plain text. Each response includ
 | `model` | no | Override the default model for this call |
 | `max_tokens` | no | Override the default token limit for this call |
 | `filter_thinking` | no | Override server-level thinking block filtering for this call (`true` = filter, `false` = keep). Omit to use the server default (`LOCAL_LLM_FILTER_THINKING`). |
-| `images` | no | List of images to send with the prompt. Each entry can be a file path, an `https://` URL, or a `data:image/...;base64,...` URI. Mixed formats allowed. Maximum per call is controlled by `LOCAL_LLM_MAX_IMAGES`. |
+| `images` | no | List of images to send with the prompt. Each entry can be a file path, an `http://` or `https://` URL, or a `data:image/...;base64,...` URI. Mixed formats allowed. Maximum per call is controlled by `LOCAL_LLM_MAX_IMAGES`. |
 | `input_files` | no | List of file paths for the MCP server to read and include in the prompt. File contents are appended after `prompt`, keeping them out of Claude's context window. All paths must be within `LOCAL_LLM_WORK_DIR`. Combined size is limited by `LOCAL_LLM_MAX_INPUT_BYTES`. |
 | `output_file` | no | File path to write the LLM response to. When set, returns `"saved N bytes to path"` instead of the full response, keeping large outputs out of Claude's context window. Must be within `LOCAL_LLM_WORK_DIR`. Parent directory must exist. |
 | `append` | no | When `true`, appends to an existing `output_file` instead of overwriting. Ignored when `output_file` is not set. Default: `false`. |
+| `tools` | no | JSON string of tool schemas in [OpenAI tool format](https://platform.openai.com/docs/guides/function-calling). Example: `'[{"type":"function","function":{"name":"read_file","description":"...","parameters":{...}}}]'`. When the model decides to call a tool, the response is a JSON array string of `tool_calls` instead of plain text. |
+| `tool_choice` | no | Controls tool selection: `"auto"` (model decides), `"none"` (disable), or a JSON object string `'{"type":"function","function":{"name":"toolName"}}'` to force a specific tool. |
+| `messages` | no | Full conversation history as a JSON string (OpenAI `messages` array). When provided, `prompt`, `system`, `images`, and `input_files` are ignored. Used for multi-turn calls: after receiving `tool_calls`, execute the tools and call again with the accumulated message history including tool results. |
+
+**Tool calling (Pattern A — Claude orchestrates)**
+
+The local LLM can call tools through a multi-turn loop where Claude acts as the executor:
+
+1. Call with `tools` (and optionally `tool_choice`). The local LLM may respond with a `tool_calls` JSON array instead of plain text.
+2. Parse the returned JSON, execute each tool call (e.g. `Read`, `Bash`), collect results.
+3. Call again with `messages` containing the full history: original user message → assistant `tool_calls` → tool results.
+4. Repeat until the local LLM returns plain text (no `tool_calls`).
+
+```
+// First call — tools is a JSON string
+prompt: "Analyze main.go"
+tools:  '[{"type":"function","function":{"name":"Read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]'
+
+// Response (tool_calls JSON string — execute these tools, then call again)
+[{"id":"tc1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"main.go\"}"}}]
+
+// Second call — messages is a JSON string with full history
+messages: '[
+  {"role":"user","content":"Analyze main.go"},
+  {"role":"assistant","tool_calls":[{"id":"tc1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"main.go\"}"}}]},
+  {"role":"tool","content":"package main...","tool_call_id":"tc1"}
+]'
+tools: '[...]'
+```
+
+The MCP server is stateless — loop orchestration is handled entirely by Claude.
 
 **Recommended use cases**
 

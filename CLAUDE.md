@@ -22,6 +22,11 @@ Break-even point: ~280 chars (~70 tokens) of expected output. Below this, tool c
 - Multi-step code analysis with continuous reasoning
 - Refusal / judgment calls based on user intent
 
+### Tool calling (Pattern A)
+`call_local_llm` supports tool calling: pass `tools` (JSON string of OpenAI tool schemas) and optionally `tool_choice`. If the local LLM responds with a `tool_calls` JSON array instead of text, execute the tools, then call again with `messages` (JSON string of full conversation history including tool results). Repeat until plain text is returned. The MCP server is stateless — Claude orchestrates the loop.
+
+Use when: multi-step file analysis, codebase exploration, or any task where the local LLM should decide what to read/run next.
+
 ### Calling conventions
 - Omit `max_tokens` unless a specific limit is needed (server default 32768)
 - For drafts (PR/commit/issue), pass concrete context in `prompt` — changes summary and key file paths, not entire diffs
